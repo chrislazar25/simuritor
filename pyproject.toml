@@ -1,0 +1,12 @@
+[project]
+name = "simuritor"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "pandas>=3.0.6",
+    "pyarrow>=25.0.1",
+    "python-dotenv>=1.2.3",
+    "typesafe-sdk>=0.7.1",
+    "uvicorn[standard]>=0.54.0",
+]
