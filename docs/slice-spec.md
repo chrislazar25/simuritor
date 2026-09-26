@@ -3,7 +3,7 @@
 Goal by ~1am: press Play → the Uri week replays tick by tick, backend streams each tick over a websocket, the map and one chart update live. Ugly is fine; it must run end to end. Everything else (Jev, chaos, insight, load-based outages) plugs into this on Saturday.
 
 ## In scope tonight
-1. **Data loader** — RT price `LZ_AEN` (dedupe on `Interval Start`), hourly temp (forward-fill to 15-min), EEA status table (hard-coded below).
+1. **Data loader** — RT price `LZ_AEN` (one row per interval; the energy-weighted variant is `LZ_AEN_EW`, see `scripts/fetch_prices.py`), hourly temp (forward-fill to 15-min), EEA status table (hard-coded below).
 2. **Fleet sim** — N seeded homes, each tick: household drain → apply action → update charge.
 3. **Naive dispatcher** — price rules only (no Jev yet), behind a `Policy` interface so rules+Jev swaps in Saturday.
 4. **Fixed outages** — a set fraction of homes lose grid power during a fixed window (below).
