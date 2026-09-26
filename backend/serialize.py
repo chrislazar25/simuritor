@@ -15,12 +15,15 @@ from backend.sim import Fleet, Sim, TickResult
 def init_message(sim: Sim) -> InitMessage:
     fleet = sim.fleet
     homes = [
-        HomeInfo(id=id_, lat=round(lat, 5), lon=round(lon, 5), household=household, capacity_kwh=capacity)
-        for id_, lat, lon, household, capacity in zip(
+        HomeInfo(
+            id=id_, lat=round(lat, 5), lon=round(lon, 5), household=household, tier=tier, capacity_kwh=capacity
+        )
+        for id_, lat, lon, household, tier, capacity in zip(
             fleet.ids,
             fleet.lat.tolist(),
             fleet.lon.tolist(),
             fleet.household.tolist(),
+            fleet.tier.tolist(),
             fleet.capacity_kwh.tolist(),
             strict=True,
         )
@@ -58,10 +61,22 @@ def tick_message(fleet: Fleet, r: TickResult) -> TickMessage:
             available_mw=r.available_mw,
             promised_mw=r.promised_mw,
             delivered_mw=r.delivered_mw,
+            utility_call=False,  # filled by ContractPolicy/failover
             homes_on_grid=r.homes_on_grid,
+            homes_exporting=int((r.grid & (r.action == "discharge")).sum()),
             homes_on_battery=r.homes_on_battery,
             homes_dark=r.homes_dark,
+            homes_dark_by_contract=0,  # filled by ContractPolicy/failover
+            headroom_mwh=0.0,  # filled by ContractPolicy/failover
             revenue_usd=round(r.revenue_usd, 2),
             revenue_tick_usd=round(r.revenue_tick_usd, 2),
+            penalty_usd=0.0,  # filled by ContractPolicy/failover
+            promise_kept_pct=None,  # filled by ContractPolicy/failover
+            failovers_warned=0,  # filled by ContractPolicy/failover
+            failovers_silent=0,  # filled by ContractPolicy/failover
+            failovers_uncovered=0,  # filled by ContractPolicy/failover
+            failover_p50_s=None,  # filled by ContractPolicy/failover
+            failover_max_s=None,  # filled by ContractPolicy/failover
         ),
+        failovers=[],  # filled by ContractPolicy/failover
     )

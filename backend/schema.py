@@ -29,6 +29,9 @@ EEA = Literal["Normal", "EEA1", "EEA2", "EEA3"]
 
 Household = Literal["standard", "medical", "elderly", "wfh"]
 
+Tier = Literal["none", "standard", "critical"]
+"""Homeowner backup contract: `none` goes dark off grid, `standard` keeps a reserve, `critical` a larger one."""
+
 Fraction = Annotated[float, Field(ge=0, le=1)]
 
 
@@ -54,6 +57,8 @@ class HomeInfo(Wire):
     lat: float
     lon: float
     household: Household
+    tier: Tier
+    """Backup contract; every `medical` household is `critical`."""
     capacity_kwh: Annotated[float, Field(gt=0)]
 
 
@@ -77,17 +82,53 @@ class FleetStats(Wire):
     available_mw: Annotated[float, Field(ge=0)]
     """What the fleet could physically export this tick: homes on grid, above reserve floor."""
     promised_mw: Annotated[float, Field(ge=0)] | None
-    """MW committed ahead of time (e.g. day-ahead); null when no commitment source is configured."""
+    """MW committed to the utility for this tick; null when no commitment source is configured."""
     delivered_mw: Annotated[float, Field(ge=0)]
     """Actual fleet discharge to the grid this tick."""
+    utility_call: bool
+    """True while the utility has called on the fleet's contracted capacity."""
     homes_on_grid: Annotated[int, Field(ge=0)]
+    """Homes with grid power this tick, including those exporting."""
+    homes_exporting: Annotated[int, Field(ge=0)]
+    """Homes on grid and discharging to it; a subset of `homes_on_grid`."""
     homes_on_battery: Annotated[int, Field(ge=0)]
     """Grid down, battery still powering the house."""
     homes_dark: Annotated[int, Field(ge=0)]
-    """Grid down and battery empty: lights out."""
+    """Grid down and battery empty: lights out (ran out)."""
+    homes_dark_by_contract: Annotated[int, Field(ge=0)]
+    """Grid down, tier `none`: the house is unpowered by contract while the battery keeps its energy."""
+    headroom_mwh: Annotated[float, Field(ge=0)]
+    """Uncommitted fleet energy: above each home's reserve, its share of the call and the failover buffer."""
     revenue_usd: float
     """Cumulative since replay start; charging at negative prices earns money."""
     revenue_tick_usd: float
+    """Revenue earned this tick alone."""
+    penalty_usd: Annotated[float, Field(ge=0)]
+    """Cumulative shortfall penalties since replay start (shortfall x interval price)."""
+    promise_kept_pct: Fraction | None
+    """Share of called intervals where delivery met the promise, 0-1; null until a call has happened."""
+    failovers_warned: Annotated[int, Field(ge=0)]
+    """Cumulative failovers where the home warned before dropping out."""
+    failovers_silent: Annotated[int, Field(ge=0)]
+    """Cumulative failovers where the home dropped out without warning (missed heartbeats)."""
+    failovers_uncovered: Annotated[int, Field(ge=0)]
+    """Cumulative failovers whose lost output no other home could cover."""
+    failover_p50_s: Annotated[float, Field(ge=0)] | None
+    """Median seconds to cover a failover so far; null until one has been covered."""
+    failover_max_s: Annotated[float, Field(ge=0)] | None
+    """Slowest cover so far, seconds; null until one has been covered."""
+
+
+class FailoverEvent(Wire):
+    """One home dropping out of an export and the fleet covering for it, for the failover log."""
+
+    home_id: str
+    kind: Literal["warned", "silent"]
+    """`warned`: the home announced it was dropping out; `silent`: detected by missed heartbeats."""
+    cover_s: Annotated[float, Field(ge=0)] | None
+    """Seconds from drop-out to full cover; null when not covered this tick."""
+    covered_by: Annotated[int, Field(ge=0)]
+    """How many homes picked up the lost output."""
 
 
 class InitMessage(Wire):
@@ -111,6 +152,8 @@ class TickMessage(Wire):
     temp_f: float
     homes: list[HomeState]
     fleet: FleetStats
+    failovers: list[FailoverEvent]
+    """Failovers that started or resolved this tick, oldest first."""
 
 
 ServerMessage = Annotated[InitMessage | TickMessage, Field(discriminator="type")]

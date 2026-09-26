@@ -140,6 +140,26 @@ def test_fleet_matches_the_spec_mix() -> None:
     assert ((-97.90 <= fleet.lon) & (fleet.lon <= -97.60)).all()
 
 
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_tier_mix_is_exact_and_medical_is_critical(seed: int) -> None:
+    fleet = uri_replay(seed=seed).fleet
+    assert {t: int((fleet.tier == t).sum()) for t in ("none", "standard", "critical")} == {
+        "none": 50,
+        "standard": 400,
+        "critical": 50,
+    }
+    assert (fleet.tier[fleet.household == "medical"] == "critical").all()
+
+
+def test_more_medical_homes_than_critical_slots_grows_critical() -> None:
+    config = FleetConfig(n_homes=100, household_mix=(("standard", 0.7), ("medical", 0.3)))
+    fleet = Fleet(config, np.random.default_rng(0))
+    medical = fleet.household == "medical"
+    assert (fleet.tier[medical] == "critical").all()
+    assert (fleet.tier == "critical").sum() == 30
+    assert (fleet.tier == "none").sum() <= 10
+
+
 def test_same_seed_same_replay(replay: list[TickResult]) -> None:
     again = run(uri_replay(seed=0))
     for a, b in zip(replay, again, strict=True):

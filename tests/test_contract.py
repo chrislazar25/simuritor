@@ -44,6 +44,10 @@ def test_tick_covers_exactly_the_init_homes(init: InitMessage, tick: TickMessage
     assert [h.id for h in tick.homes] == init_ids
 
 
+def test_medical_homes_are_critical(init: InitMessage) -> None:
+    assert all(h.tier == "critical" for h in init.homes if h.household == "medical")
+
+
 def test_tick_is_inside_the_replay_window(init: InitMessage, tick: TickMessage) -> None:
     assert 0 <= tick.i < init.n_ticks
     assert init.start <= tick.t < init.end
@@ -54,6 +58,7 @@ def test_fleet_stats_match_homes(tick: TickMessage) -> None:
     assert fleet.homes_on_grid == sum(h.grid for h in homes)
     assert fleet.homes_on_battery == sum(not h.grid and h.soc > 0 for h in homes)
     assert fleet.homes_dark == sum(not h.grid and h.soc == 0 for h in homes)
+    assert fleet.homes_exporting == sum(h.grid and h.action == "discharge" for h in homes)
     delivered_kw = sum(h.kw for h in homes if h.action == "discharge")
     assert fleet.delivered_mw == pytest.approx(delivered_kw / 1000)
     assert fleet.delivered_mw <= fleet.available_mw

@@ -9,6 +9,7 @@
       "lat": 30.19328,
       "lon": -97.86466,
       "household": "elderly",
+      "tier": "standard",
       "capacity_kwh": 25.0
     },
     {
@@ -16,6 +17,7 @@
       "lat": 30.24254,
       "lon": -97.65516,
       "household": "medical",
+      "tier": "critical",
       "capacity_kwh": 39.2
     },
     {
@@ -23,6 +25,7 @@
       "lat": 30.20422,
       "lon": -97.72552,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 39.2
     },
     {
@@ -30,6 +33,7 @@
       "lat": 30.34167,
       "lon": -97.78828,
       "household": "wfh",
+      "tier": "standard",
       "capacity_kwh": 25.0
     },
     {
@@ -37,6 +41,7 @@
       "lat": 30.31432,
       "lon": -97.88116,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 25.0
     },
     {
@@ -44,6 +49,7 @@
       "lat": 30.16788,
       "lon": -97.83821,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 25.0
     },
     {
@@ -51,6 +57,7 @@
       "lat": 30.35412,
       "lon": -97.77172,
       "household": "wfh",
+      "tier": "standard",
       "capacity_kwh": 39.2
     },
     {
@@ -58,6 +65,7 @@
       "lat": 30.24424,
       "lon": -97.72433,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 39.2
     },
     {
@@ -65,6 +73,7 @@
       "lat": 30.28596,
       "lon": -97.81007,
       "household": "medical",
+      "tier": "critical",
       "capacity_kwh": 25.0
     },
     {
@@ -72,6 +81,7 @@
       "lat": 30.38831,
       "lon": -97.6903,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 25.0
     },
     {
@@ -79,6 +89,7 @@
       "lat": 30.22323,
       "lon": -97.72767,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 25.0
     },
     {
@@ -86,6 +97,7 @@
       "lat": 30.30756,
       "lon": -97.63746,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 25.0
     },
     {
@@ -93,6 +105,7 @@
       "lat": 30.36883,
       "lon": -97.81362,
       "household": "elderly",
+      "tier": "standard",
       "capacity_kwh": 39.2
     },
     {
@@ -100,6 +113,7 @@
       "lat": 30.44405,
       "lon": -97.86458,
       "household": "standard",
+      "tier": "none",
       "capacity_kwh": 25.0
     },
     {
@@ -107,6 +121,7 @@
       "lat": 30.27544,
       "lon": -97.67286,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 39.2
     },
     {
@@ -114,6 +129,7 @@
       "lat": 30.1956,
       "lon": -97.75331,
       "household": "standard",
+      "tier": "none",
       "capacity_kwh": 25.0
     },
     {
@@ -121,6 +137,7 @@
       "lat": 30.16176,
       "lon": -97.69954,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 25.0
     },
     {
@@ -128,6 +145,7 @@
       "lat": 30.37937,
       "lon": -97.72809,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 39.2
     },
     {
@@ -135,6 +153,7 @@
       "lat": 30.41264,
       "lon": -97.80588,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 39.2
     },
     {
@@ -142,6 +161,7 @@
       "lat": 30.35859,
       "lon": -97.72169,
       "household": "standard",
+      "tier": "standard",
       "capacity_kwh": 25.0
     }
   ]

@@ -15,7 +15,7 @@ import numpy as np
 from backend.data import TICK, Frame, UriParquetSource
 from backend.faults import Fault, RollingOutage
 from backend.policy import FleetView, NaivePolicy, Policy
-from backend.schema import Household
+from backend.schema import Household, Tier
 
 HOURS_PER_TICK = TICK / timedelta(hours=1)  # 0.25
 
@@ -35,6 +35,8 @@ class FleetConfig:
         ("elderly", 0.1),
         ("wfh", 0.1),
     )
+    tier_mix: tuple[tuple[Tier, float], ...] = (("none", 0.1), ("standard", 0.8), ("critical", 0.1))
+    """⚠ Homeowner backup contracts (docs/dispatch-design.md). Every `medical` household is `critical`."""
     start_soc: tuple[float, float] = (0.60, 0.95)
     reserve_floor: float = 0.20
     max_kw: float = 10.0
@@ -62,6 +64,23 @@ def exact_mix[T](mix: Sequence[tuple[T, float]], n: int, rng: np.random.Generato
     return rng.permutation(np.repeat(np.array(values), counts))
 
 
+def assign_tiers(
+    mix: Sequence[tuple[Tier, float]], household: np.ndarray, rng: np.random.Generator
+) -> np.ndarray:
+    """An exact tier mix with every `medical` household `critical`.
+
+    Medical homes swap tiers with non-medical critical homes, so the mix stays exact
+    unless there are more medical homes than critical slots; then critical grows.
+    """
+    tier = exact_mix(mix, len(household), rng)
+    medical = household == "medical"
+    wrong = np.flatnonzero(medical & (tier != "critical"))
+    spare = np.flatnonzero(~medical & (tier == "critical"))[: len(wrong)]
+    tier[spare] = tier[wrong[: len(spare)]]
+    tier[wrong] = "critical"
+    return tier
+
+
 def read_only(a: np.ndarray) -> np.ndarray:
     a.setflags(write=False)
     return a
@@ -80,6 +99,8 @@ class Fleet:
         self.household = read_only(exact_mix(config.household_mix, n, rng))
         self.drain_factor = read_only(rng.uniform(1 - config.drain_noise, 1 + config.drain_noise, n))
         self.soc = read_only(rng.uniform(*config.start_soc, n))
+        # Drawn last so adding tiers left every earlier draw (and the replay) unchanged.
+        self.tier = read_only(assign_tiers(config.tier_mix, self.household, rng))
 
     def __len__(self) -> int:
         return len(self.ids)

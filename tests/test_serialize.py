@@ -23,6 +23,8 @@ def test_init_describes_the_replay(messages: tuple[InitMessage, list[TickMessage
     assert init.n_ticks == len(ticks) == 672
     assert init.start == ticks[0].t and init.end == ticks[-1].t + TICK
     assert len({h.id for h in init.homes}) == len(init.homes) == 500
+    assert all(h.tier == "critical" for h in init.homes if h.household == "medical")
+    assert sum(h.tier == "none" for h in init.homes) == sum(h.tier == "critical" for h in init.homes) == 50
 
 
 def test_messages_round_trip_through_json(messages: tuple[InitMessage, list[TickMessage]]) -> None:
@@ -41,8 +43,10 @@ def test_every_tick_keeps_the_contract_consistent(messages: tuple[InitMessage, l
         assert fleet.homes_on_grid == sum(h.grid for h in homes)
         assert fleet.homes_on_battery == sum(not h.grid and h.soc > 0 for h in homes)
         assert fleet.homes_dark == sum(not h.grid and h.soc == 0 for h in homes)
+        assert fleet.homes_exporting == sum(h.grid and h.action == "discharge" for h in homes)
         delivered_kw = sum(h.kw for h in homes if h.action == "discharge")
         assert fleet.delivered_mw == pytest.approx(delivered_kw / 1000)
         assert fleet.delivered_mw <= fleet.available_mw + 1e-12
         assert fleet.promised_mw is None
         assert all(h.src == "rule" and h.conf is None for h in homes)
+    assert max(tick.fleet.homes_exporting for tick in ticks) > 0

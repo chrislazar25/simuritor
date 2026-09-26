@@ -191,10 +191,22 @@
     "available_mw": 0.111,
     "promised_mw": null,
     "delivered_mw": 0.1,
+    "utility_call": false,
     "homes_on_grid": 12,
+    "homes_exporting": 10,
     "homes_on_battery": 7,
     "homes_dark": 1,
+    "homes_dark_by_contract": 0,
+    "headroom_mwh": 0.0,
     "revenue_usd": 2084.21,
-    "revenue_tick_usd": 240.46
-  }
+    "revenue_tick_usd": 240.46,
+    "penalty_usd": 0.0,
+    "promise_kept_pct": null,
+    "failovers_warned": 0,
+    "failovers_silent": 0,
+    "failovers_uncovered": 0,
+    "failover_p50_s": null,
+    "failover_max_s": null
+  },
+  "failovers": []
 }

@@ -10,6 +10,48 @@
     }
   ],
   "$defs": {
+    "FailoverEvent": {
+      "additionalProperties": false,
+      "description": "One home dropping out of an export and the fleet covering for it, for the failover log.",
+      "properties": {
+        "home_id": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "`warned`: the home announced it was dropping out; `silent`: detected by missed heartbeats.",
+          "enum": [
+            "warned",
+            "silent"
+          ],
+          "type": "string"
+        },
+        "cover_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Seconds from drop-out to full cover; null when not covered this tick."
+        },
+        "covered_by": {
+          "description": "How many homes picked up the lost output.",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "home_id",
+        "kind",
+        "cover_s",
+        "covered_by"
+      ],
+      "title": "FailoverEvent",
+      "type": "object"
+    },
     "FleetStats": {
       "additionalProperties": false,
       "properties": {
@@ -28,14 +70,24 @@
               "type": "null"
             }
           ],
-          "description": "MW committed ahead of time (e.g. day-ahead); null when no commitment source is configured."
+          "description": "MW committed to the utility for this tick; null when no commitment source is configured."
         },
         "delivered_mw": {
           "description": "Actual fleet discharge to the grid this tick.",
           "minimum": 0,
           "type": "number"
         },
+        "utility_call": {
+          "description": "True while the utility has called on the fleet's contracted capacity.",
+          "type": "boolean"
+        },
         "homes_on_grid": {
+          "description": "Homes with grid power this tick, including those exporting.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "homes_exporting": {
+          "description": "Homes on grid and discharging to it; a subset of `homes_on_grid`.",
           "minimum": 0,
           "type": "integer"
         },
@@ -45,27 +97,106 @@
           "type": "integer"
         },
         "homes_dark": {
-          "description": "Grid down and battery empty: lights out.",
+          "description": "Grid down and battery empty: lights out (ran out).",
           "minimum": 0,
           "type": "integer"
+        },
+        "homes_dark_by_contract": {
+          "description": "Grid down, tier `none`: the house is unpowered by contract while the battery keeps its energy.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "headroom_mwh": {
+          "description": "Uncommitted fleet energy: above each home's reserve, its share of the call and the failover buffer.",
+          "minimum": 0,
+          "type": "number"
         },
         "revenue_usd": {
           "description": "Cumulative since replay start; charging at negative prices earns money.",
           "type": "number"
         },
         "revenue_tick_usd": {
+          "description": "Revenue earned this tick alone.",
           "type": "number"
+        },
+        "penalty_usd": {
+          "description": "Cumulative shortfall penalties since replay start (shortfall x interval price).",
+          "minimum": 0,
+          "type": "number"
+        },
+        "promise_kept_pct": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Share of called intervals where delivery met the promise, 0-1; null until a call has happened."
+        },
+        "failovers_warned": {
+          "description": "Cumulative failovers where the home warned before dropping out.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failovers_silent": {
+          "description": "Cumulative failovers where the home dropped out without warning (missed heartbeats).",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failovers_uncovered": {
+          "description": "Cumulative failovers whose lost output no other home could cover.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failover_p50_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Median seconds to cover a failover so far; null until one has been covered."
+        },
+        "failover_max_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Slowest cover so far, seconds; null until one has been covered."
         }
       },
       "required": [
         "available_mw",
         "promised_mw",
         "delivered_mw",
+        "utility_call",
         "homes_on_grid",
+        "homes_exporting",
         "homes_on_battery",
         "homes_dark",
+        "homes_dark_by_contract",
+        "headroom_mwh",
         "revenue_usd",
-        "revenue_tick_usd"
+        "revenue_tick_usd",
+        "penalty_usd",
+        "promise_kept_pct",
+        "failovers_warned",
+        "failovers_silent",
+        "failovers_uncovered",
+        "failover_p50_s",
+        "failover_max_s"
       ],
       "title": "FleetStats",
       "type": "object"
@@ -92,6 +223,15 @@
           ],
           "type": "string"
         },
+        "tier": {
+          "description": "Backup contract; every `medical` household is `critical`.",
+          "enum": [
+            "none",
+            "standard",
+            "critical"
+          ],
+          "type": "string"
+        },
         "capacity_kwh": {
           "exclusiveMinimum": 0,
           "type": "number"
@@ -102,6 +242,7 @@
         "lat",
         "lon",
         "household",
+        "tier",
         "capacity_kwh"
       ],
       "title": "HomeInfo",
@@ -252,6 +393,13 @@
         },
         "fleet": {
           "$ref": "#/$defs/FleetStats"
+        },
+        "failovers": {
+          "description": "Failovers that started or resolved this tick, oldest first.",
+          "items": {
+            "$ref": "#/$defs/FailoverEvent"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -262,7 +410,8 @@
         "eea",
         "temp_f",
         "homes",
-        "fleet"
+        "fleet",
+        "failovers"
       ],
       "title": "TickMessage",
       "type": "object"
