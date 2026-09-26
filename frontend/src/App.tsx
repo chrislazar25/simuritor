@@ -1,21 +1,32 @@
+import { Controls } from './Controls.tsx'
+import { Counters } from './Counters.tsx'
+import { formatClock, formatPrice } from './format.ts'
 import { useTicks } from './useTicks.ts'
 
-// Empty layout from docs/design.md: top bar, map (the scene), right panel with counters and chart slots.
+// Layout from docs/design.md: top bar, map (the scene), right panel with counters and chart slots.
 export default function App() {
-  const { status, tick } = useTicks()
+  const { status, init, tick, playing, send } = useTicks()
+  const finished = init !== null && tick?.i === init.n_ticks - 1
 
   return (
     <div className="app">
       <header className="topbar">
         <span className="brand">SIMURITOR</span>
-        <span className="readout">ws: {status}</span>
-        <span className="readout">i: {tick ? tick.i : '-'}</span>
-        <span className="readout">t: {tick ? tick.t : '-'}</span>
-        <span className="readout">price: {tick ? `$${tick.price.toFixed(2)}/MWh` : '-'}</span>
+        <span className="readout">{tick ? formatClock(tick.t) : init ? formatClock(init.start) : '–'}</span>
+        <span className="eea" data-level={tick?.eea ?? 'Normal'}>
+          {tick?.eea ?? 'Normal'}
+        </span>
+        <span className="readout">{tick ? formatPrice(tick.price) : '–'}</span>
+        <span className="readout">{tick ? `${tick.temp_f.toFixed(0)}°F` : '–'}</span>
+        <span className="readout">
+          tick {tick ? tick.i + 1 : 0}/{init?.n_ticks ?? '–'}
+        </span>
+        <Controls connected={status === 'open'} playing={playing} finished={finished} send={send} />
+        <span className="readout status">ws: {status}</span>
       </header>
       <main className="map slot">map</main>
       <aside className="panel">
-        <section className="slot">counters</section>
+        <Counters fleet={tick?.fleet ?? null} />
         <section className="slot">chart</section>
       </aside>
     </div>

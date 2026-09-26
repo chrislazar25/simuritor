@@ -14,17 +14,23 @@ function socketUrl(path: string): string {
 /**
  * One replay session over a websocket: keeps the latest `init` and `tick`,
  * and reconnects with backoff when the socket closes.
+ *
+ * `playing` mirrors the server's play state, which it never sends: play/pause
+ * set it, and the server pauses itself on every `init` (connect or reset) and
+ * after the last tick.
  */
 export function useTicks(path = '/ws') {
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [init, setInit] = useState<InitMessage | null>(null)
   const [tick, setTick] = useState<TickMessage | null>(null)
+  const [playing, setPlaying] = useState(false)
   const socket = useRef<WebSocket | null>(null)
 
   useEffect(() => {
     let disposed = false
     let retryMs = RETRY_MIN_MS
     let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let nTicks = 0
 
     function connect() {
       setStatus('connecting')
@@ -41,11 +47,14 @@ export function useTicks(path = '/ws') {
         switch (msg.type) {
           case 'init':
             // A new init starts a new replay (connect or reset); the old tick no longer applies.
+            nTicks = msg.n_ticks
             setInit(msg)
             setTick(null)
+            setPlaying(false)
             break
           case 'tick':
             setTick(msg)
+            if (msg.i === nTicks - 1) setPlaying(false)
             break
         }
       }
@@ -53,6 +62,7 @@ export function useTicks(path = '/ws') {
         if (socket.current === ws) socket.current = null
         if (disposed) return
         setStatus('closed')
+        setPlaying(false)
         retryTimer = setTimeout(connect, retryMs)
         retryMs = Math.min(retryMs * 2, RETRY_MAX_MS)
       }
@@ -71,8 +81,10 @@ export function useTicks(path = '/ws') {
     const ws = socket.current
     if (ws?.readyState !== WebSocket.OPEN) return false
     ws.send(JSON.stringify(msg))
+    if (msg.type === 'play') setPlaying(true)
+    if (msg.type === 'pause' || msg.type === 'reset') setPlaying(false)
     return true
   }, [])
 
-  return { status, init, tick, send }
+  return { status, init, tick, playing, send }
 }

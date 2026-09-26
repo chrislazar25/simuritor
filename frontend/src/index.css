@@ -67,11 +67,101 @@ body {
   border-left: 1px solid var(--border);
 }
 
-.panel > .slot + .slot {
+.panel > * + * {
   border-top: 1px solid var(--border);
 }
 
-/* Placeholder look until the map, counters and chart land. */
+.status {
+  font-size: 12px;
+}
+
+.eea {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-num);
+  color: var(--muted);
+}
+
+.eea[data-level='EEA1'],
+.eea[data-level='EEA2'] {
+  border-color: var(--state-backup);
+  color: var(--state-backup);
+}
+
+.eea[data-level='EEA3'] {
+  border-color: var(--grid-off);
+  background: var(--grid-off);
+  color: var(--text);
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.controls button {
+  min-width: 56px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.controls button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.speeds {
+  display: flex;
+}
+
+.speeds button {
+  min-width: 40px;
+  border-radius: 0;
+  font-family: var(--font-num);
+}
+
+.speeds button + button {
+  border-left: none;
+}
+
+.speeds button[aria-pressed='true'] {
+  background: var(--accent);
+}
+
+.counters {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 16px;
+}
+
+.counters div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.counters dd {
+  margin: 0;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 50%;
+}
+
+/* Placeholder look until the map and chart land. */
 .slot {
   display: grid;
   place-items: center;

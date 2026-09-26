@@ -14,7 +14,6 @@
 ## To do when we reach that step
 - Recording for the deployed site: a tick is ~48 KiB of JSON at 500 homes (SoC/kW/MW sent unrounded so fleet stats add up exactly), so 672 ticks ≈ 32 MB. Round SoC/kW in the recording (and keep counts consistent) or compress/delta-encode it.
 - Frontend visual pass: load the fonts named in `docs/design.md` (Inter Tight, JetBrains Mono); tonight the page falls back to system fonts.
-- Frontend top bar: format `t` for people (e.g. "Feb 15 05:00 CT") instead of raw ISO.
 - Scene lighting: `suncalc` vs ~30 lines of our own sun math; add a "hold light level" toggle if the day/night cycle distracts in the Loom recording.
 
 ## Deferred (do if time allows)
