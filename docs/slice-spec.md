@@ -27,7 +27,7 @@ Jev, confidence gate, circuit breaker, chaos injection, policy comparison, day-a
 | Household drain | ⚠ kW = 0.8 + 0.12 × max(0, 65 − temp°F) (≈ 7 kW at 13°F), ±20% per-home noise |
 | Outage window | ⚠ Feb 15 02:00 → Feb 18 12:00 (start matches the ~10 GW load drop 1–2am Feb 15 in ERCOT load data; end to verify) |
 | Outage share | ⚠ 40% of homes, chosen at random (seeded) at window start; fixed for the window tonight |
-| EEA status | Normal → EEA3 Feb 15 01:25 → Normal Feb 19 09:00 (⚠ verify times) |
+| EEA status | Feb 15: EEA1 00:15 → EEA2 01:07 → EEA3 01:25 · Feb 19: EEA2 09:00 → EEA1 10:00 → Normal 10:35 (sourced, approximate; see `EEA_TIMELINE` in `backend/data.py`) |
 | Naive policy | price ≥ $1,000 and charge > floor+10% → discharge · price ≤ $30 and charge < 90% → charge · else hold · home in outage → powers own house from battery (no export) |
 | Revenue | discharged kWh × price / 1000 per tick (charging costs the same way) |
 | Available MW | what the fleet could physically export this tick (homes on grid, above floor) |
