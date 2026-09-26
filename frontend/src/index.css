@@ -1,0 +1,94 @@
+/* Semantic tokens (docs/design.md, "Theming seams"). Components use only these names;
+   a theme is one block of values under [data-theme="…"]. */
+:root {
+  --surface: #1c1b1a;
+  --surface-raised: #292826;
+  --border: #3a3937;
+  --text: #f0eeeb;
+  --muted: #8c8a87;
+  --accent: #048ee5;
+
+  --state-grid: #77a45a;
+  --state-export: #048ee5;
+  --state-backup: #f7c33c;
+  --state-dark: #54524f;
+  --grid-off: #bf5249;
+
+  --font-ui: 'Inter Tight', system-ui, sans-serif;
+  --font-num: 'JetBrains Mono', ui-monospace, monospace;
+
+  --panel-width: 320px;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 1fr var(--panel-width);
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.readout {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  border-left: 1px solid var(--border);
+}
+
+.panel > .slot + .slot {
+  border-top: 1px solid var(--border);
+}
+
+/* Placeholder look until the map, counters and chart land. */
+.slot {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  color: var(--muted);
+}
+
+/* Narrow screens: panels stack under the map. */
+@media (max-width: 800px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(50vh, 1fr) auto;
+    height: auto;
+  }
+
+  .panel {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}
