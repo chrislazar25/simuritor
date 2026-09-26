@@ -24,11 +24,11 @@ Jev, confidence gate, circuit breaker, chaos injection, policy comparison, day-a
 | Max charge/discharge power | ⚠ 10 kW per home |
 | Starting charge | uniform 60–95% |
 | Household mix | 70% standard · 10% medical device · 10% elderly · 10% work-from-home |
-| Household drain | ⚠ kW = 0.8 + 0.12 × max(0, 65 − temp°F) (≈ 7 kW at 13°F), ±20% per-home noise |
+| Household drain | ⚠ kW = 0.3 + 0.042 × max(0, 65 − temp°F) (≈ 2.5 kW at 13°F), fixed ±20% per-home factor; only drawn from the battery on backup. First version was 0.8 + 0.12 × … (≈ 7 kW, whole-home resistance heat), which emptied a battery in 3.5–5.6 h; reasoning in `FleetConfig` |
 | Outage window | ⚠ Feb 15 02:00 → Feb 18 12:00 (start matches the ~10 GW load drop 1–2am Feb 15 in ERCOT load data; end to verify) |
-| Outage share | ⚠ 40% of homes, chosen at random (seeded) at window start; fixed for the window tonight |
+| Outages | ⚠ Rolling (`RollingOutage`): 10% of homes never restored for the whole window; the rest in 5 seeded groups cycling 4 h off / 6 h on, staggered 2 h apart, so 40% of them (46% of the fleet) are out at any moment. `FixedOutage` (one fixed 40%) stays for tests |
 | EEA status | Feb 15: EEA1 00:15 → EEA2 01:07 → EEA3 01:25 · Feb 19: EEA2 09:00 → EEA1 10:00 → Normal 10:35 (sourced, approximate; see `EEA_TIMELINE` in `backend/data.py`) |
-| Naive policy | price ≥ $1,000 and charge > floor+10% → discharge · price ≤ $30 and charge < 90% → charge · else hold · home in outage → powers own house from battery (no export) |
+| Naive policy | price ≥ $1,000 and charge > floor+10% → discharge · price ≤ $30 and charge < 90% → charge · on grid and below floor → charge whatever the price (recovery) · else hold · home in outage → powers own house from battery (no export; enforced by the sim) |
 | Revenue | discharged kWh × price / 1000 per tick (charging costs the same way) |
 | Available MW | what the fleet could physically export this tick (homes on grid, above floor) |
 | Promised MW | MW committed ahead of time — `null` tonight (no commitment source); Saturday a day-ahead plan fills it |
@@ -45,7 +45,7 @@ green = on grid, idle/charging · blue = exporting · amber = grid out, running 
 
 ## Repo layout
 ```
-backend/  app.py (FastAPI + ws, ReplaySession) · sim.py (fleet, tick) · policy.py (Policy interface, NaivePolicy) · faults.py (Fault interface, FixedOutage) · data.py (loaders, EEA table) · serialize.py (sim → wire)
+backend/  app.py (FastAPI + ws, ReplaySession) · sim.py (fleet, tick) · policy.py (Policy interface, NaivePolicy) · faults.py (Fault interface, RollingOutage, FixedOutage) · data.py (loaders, EEA table) · serialize.py (sim → wire)
 frontend/ Vite + React: Map.tsx (MapLibre + Carto) · Charts.tsx (Recharts) · Controls.tsx · useTicks.ts (ws hook)
 data/     parquet files (copied from prep repo)
 ```
@@ -53,4 +53,4 @@ data/     parquet files (copied from prep repo)
 ## Done means
 Play → 672 ticks stream without crashing, dots change colour when outages hit Feb 15 02:00, reset works. Commit + push.
 
-(The original line also said "revenue counter climbs through Feb 16–18". With real Uri prices the naive policy sells its reserve on Feb 13 and can't recharge, so revenue is flat after Feb 13. That's the baseline's story, not a bug: see `docs/notes.md`, "Data findings".)
+(The original line also said "revenue counter climbs through Feb 16–18". With real Uri prices the naive policy sells its reserve on Feb 13, then buys it back at crisis prices after each rolling outage, so revenue falls from Feb 15 and ends around −$191k. That's the baseline's story, not a bug: see `docs/notes.md`, "Data findings".)

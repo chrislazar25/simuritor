@@ -1,6 +1,39 @@
 # Simuritor: design direction
 
-Status: **vibe not locked.** Tonight ships a thin, neutral version whose seams let it grow into either reference below without a rewrite.
+Status: **vibe locked Sat 10:30 → "Apple Maps" (see [Locked direction](#locked-direction-sat)).** Base-leaning restraint, a tilted 3D vector map of Austin, a floating glass HUD, light and weather driven by the replay. The pixel/Simile path is dropped for this hackathon. Sections below that section still hold unless it overrides them.
+
+## Locked direction (Sat)
+
+### The scene
+- **Basemap:** MapLibre with **OpenFreeMap vector tiles** (free, no key, building heights), replacing the Carto rasters. Custom muted palette as a style owned by the theme, not a stock style.
+- **Camera:** tilted (~50–60° pitch), slight bearing, framed on downtown + Lady Bird Lake with the fleet's bbox in view. 3D building extrusions (`fill-extrusion`), so the skyline and the Capitol read as shapes. Pan/zoom/rotate stay enabled.
+- **Landmarks:** a handful of pinned labels only: Texas Capitol, Congress Ave Bridge, Frost Bank Tower, Lady Bird Lake. No custom 3D models.
+- **Homes:** one WebGL circle layer (still never DOM markers) with a soft glow halo per visual state: warm window glow = powered on grid, blue pulse = exporting, amber = on battery, hollow dim grey = dark. **Medical homes get a ring** (the at-risk overlay).
+
+### Light: the sim's own sun (replaces the raster cross-fade below)
+- Sun elevation from tick `t` + Austin lat/lon via `suncalc` in the frontend (no schema change) → daylight factor 0–1, smoothed through twilight.
+- The factor interpolates a small set of style paint values (background, land, water, building colour/opacity, extrusion light intensity) between a day palette and a night palette. One `setPaintProperty` batch per tick, throttled; the home layer is untouched.
+- Night is the money shot: outages start Feb 15 02:00 in the dark, snow falling, homes glowing on battery, then winking out.
+
+### Weather (real data)
+- Snow / sleet / freezing rain shown as a light particle overlay (canvas above the map, `pointer-events: none`) driven by real hourly Open-Meteo `weather_code` / `snowfall` (Uri: snow Feb 14–15, freezing rain ~Feb 17). Overcast dims the day palette slightly.
+- **Needs a contract change:** add a `weather` field to the tick (e.g. `clear | cloudy | snow | sleet | freezing_rain`) and extend the data loader + fetch script. Regenerate types and fixtures in the same commit (AGENTS.md rule).
+- `prefers-reduced-motion`: no particles, fixed light level.
+
+### The HUD (instruments float over the map)
+- Glass panels (translucent surface + `backdrop-filter: blur`), fixed widths, tabular numbers: **top bar** (SIMURITOR, clock, EEA badge, price), **right stack** (counters: on grid / on battery / dark, revenue; chart: price + delivered/available MW), **bottom timeline** (play/pause, speed, reset, scrubber with Feb 15 02:00 outage marker and EEA band).
+- UI chrome keeps one fixed theme regardless of scene light (unchanged rule).
+- Panels collapse so the map can be shown bare for the Loom.
+
+### Playable (interaction with substance, in build order)
+1. **Timeline scrub:** drag to any tick. Live mode needs a `seek` client message (backend replays from tick 0 to the target; it takes ~70 ms for the whole week) → contract change; the recorded/deployed mode seeks locally.
+2. **Click a home → card:** household, capacity, SoC sparkline, current action, decision source (rule / jev / fallback) and confidence. The trust layer, clickable.
+3. **Cut a neighbourhood** (click or lasso an area → its homes lose grid): the chaos injection made visible. Needs the backend chaos seam + a client message; Saturday evening if chaos exists.
+4. Stretch: **reserve-% slider** that re-runs the replay (the insight experiment, hands-on).
+5. Stretch: scripted **camera flyover** for the Loom intro.
+
+### Cut (overkill for 36 h)
+Pixel / Pokémon art, real shadows, water reflections, photorealism, custom landmark models, full sky/sunrise rendering. **No bats:** the Congress Ave colony winters in Mexico, so showing them during Uri would be wrong (an optional joke tooltip on the bridge is fine).
 
 ## Purpose and audience
 - **Job:** watch a real crisis (Winter Storm Uri) roll through a city and see, home by home, how a battery fleet's dispatch policy holds up.
@@ -95,8 +128,6 @@ The map's day/night follows the simulated clock, so there is no light-or-dark de
 - No Base or Simile assets, fonts or logos.
 - No theme switcher UI tonight; the seam exists, the second theme doesn't.
 
-## Open (decide when locking the vibe)
-- Base-style clean vs pixel diorama vs a blend (clean UI chrome, pixel scene)?
-- Light or dark UI chrome (the scene follows the sun either way).
-- How to flag at-risk homes (medical, elderly) on the map.
-- Whether instruments stay beside the map or float over it as a HUD.
+## Open
+- ~~Base-style vs pixel~~ → Base-style / Apple Maps (Sat). ~~Beside vs HUD~~ → floating HUD. ~~At-risk flag~~ → ring on medical homes (elderly later if it doesn't clutter).
+- Light or dark UI chrome (the scene follows the sun either way). Default: dark glass.

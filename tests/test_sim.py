@@ -2,18 +2,17 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from itertools import pairwise
 
 import numpy as np
 import pytest
 
 from backend.data import TZ, Frame
+from backend.faults import OUTAGE_END, OUTAGE_START
 from backend.policy import Decisions, FleetView
 from backend.sim import Fleet, FleetConfig, Sim, TickResult, read_only, uri_replay
 
 FLOOR = FleetConfig().reserve_floor
-OUTAGE_START = datetime(2021, 2, 15, 2, tzinfo=TZ)
-OUTAGE_END = datetime(2021, 2, 18, 12, tzinfo=TZ)
+DRAIN_13F = FleetConfig().drain_base_kw + FleetConfig().drain_kw_per_degf * (65 - 13)  # 2.484 kW
 
 
 def ct(day: int, hour: int = 0) -> datetime:
@@ -52,7 +51,7 @@ def tiny_sim(
     temp_f: float = 13.0,
     ticks: int = 1,
 ) -> Sim:
-    """25 kWh homes with the exact spec drain (no noise): 7.04 kW at 13 °F."""
+    """25 kWh homes with the exact default drain (no noise): `DRAIN_13F` at 13 °F."""
     n = len(soc)
     fleet = Fleet(FleetConfig(n_homes=n, drain_noise=0.0), np.random.default_rng(0))
     fleet.capacity_kwh = read_only(np.full(n, 25.0))
@@ -79,8 +78,8 @@ def test_charge_is_10kw_and_stops_at_full() -> None:
 def test_grid_down_forces_backup_whatever_the_policy_says() -> None:
     r = tiny_sim(soc=[0.50], actions=["discharge"], down=[True]).step()
     assert r.action.tolist() == ["backup"]
-    assert r.kw.tolist() == pytest.approx([7.04])  # the house load, not an export
-    assert r.soc.tolist() == pytest.approx([0.50 - 7.04 * 0.25 / 25])
+    assert r.kw.tolist() == pytest.approx([DRAIN_13F])  # the house load, not an export
+    assert r.soc.tolist() == pytest.approx([0.50 - DRAIN_13F * 0.25 / 25])
     assert r.delivered_mw == 0 and r.available_mw == 0 and r.revenue_tick_usd == 0
 
 
@@ -172,10 +171,13 @@ def test_everyone_on_grid_outside_the_outage(replay: list[TickResult]) -> None:
             assert r.homes_on_grid == 500
 
 
-def test_outage_hits_40_percent(replay: list[TickResult]) -> None:
+def test_rolling_outage_keeps_46_percent_out_and_homes_cycle(replay: list[TickResult]) -> None:
     during = [r for r in replay if OUTAGE_START <= r.frame.t < OUTAGE_END]
     assert during
-    assert all(r.homes_on_battery + r.homes_dark == 200 for r in during)
+    assert all(r.homes_on_battery + r.homes_dark == 230 for r in during)  # see RollingOutage
+    grid = np.array([r.grid for r in during])
+    cycled = (grid.any(axis=0) & ~grid.all(axis=0)).sum()
+    assert cycled == 450  # every rotating home is on grid at some point in the window, and off at another
 
 
 def test_fleet_stats_agree_with_homes(replay: list[TickResult]) -> None:
@@ -186,19 +188,24 @@ def test_fleet_stats_agree_with_homes(replay: list[TickResult]) -> None:
     assert replay[-1].revenue_usd == pytest.approx(sum(r.revenue_tick_usd for r in replay))
 
 
-def test_naive_baseline_sells_the_reserve_before_the_blackouts(replay: list[TickResult]) -> None:
+def test_naive_baseline_sells_the_reserve_then_buys_it_back_at_crisis_prices(replay: list[TickResult]) -> None:
     """The naive policy's story on real Uri prices (docs/notes.md, "Data findings").
 
-    Prices sit above $1,000 from Feb 13 and never reach $30 until Feb 19, so the fleet
-    exports down to the floor on Feb 13, can't recharge, and has nothing left for the outage.
+    Prices sit above $1,000 from Feb 13 and never reach $30 until Feb 19. The fleet exports
+    down to the floor on Feb 13, then the recovery rule refills homes back from each rotation
+    at ~$9,000/MWh, so the replay ends deep in the red. Never-restored homes go dark within hours.
     """
     earned = [r for r in replay if r.revenue_tick_usd > 0]
     assert earned and all(r.frame.price >= 1000 for r in earned)
     assert all(r.frame.t < ct(14) for r in earned)  # everything is sold on Feb 13
-
-    before_19 = [r for r in replay if r.frame.t < ct(19)]
-    assert all(b.revenue_usd >= a.revenue_usd for a, b in pairwise(before_19))
     assert all(r.delivered_mw == 0 for r in replay if ct(16) <= r.frame.t < ct(19))
 
-    at_six = next(r for r in replay if r.frame.t == ct(15, 6))
-    assert at_six.homes_dark == 200  # every outage home is dark within four hours
+    end_of_13 = next(r for r in replay if r.frame.t == ct(14)).revenue_usd
+    end_of_outage = next(r for r in replay if r.frame.t == OUTAGE_END).revenue_usd
+    assert end_of_13 > 0 > end_of_outage
+    assert all(r.frame.price >= 1000 for r in replay if r.revenue_tick_usd < 0 and r.frame.t < ct(19))
+
+    sim = uri_replay(seed=0)
+    never_restored = sim.faults[0].group < 0
+    at_noon = next(r for r in replay if r.frame.t == ct(15, 12))
+    assert (at_noon.soc[never_restored] == 0).all()  # dark within 10 hours

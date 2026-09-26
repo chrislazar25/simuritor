@@ -46,7 +46,12 @@ class Policy(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class NaivePolicy:
-    """Price rules only (docs/slice-spec.md): sell high, buy low, otherwise hold."""
+    """Price rules (docs/slice-spec.md): sell high, buy low, otherwise hold.
+
+    Plus one recovery rule: a home on grid below the reserve floor charges whatever the
+    price, so a home that came back from an outage refills its backup. It only refills to
+    the floor; above that, the price rules apply again.
+    """
 
     discharge_at_usd: float = 1000.0
     """Discharge when the price is at least this, $/MWh..."""
@@ -61,7 +66,9 @@ class NaivePolicy:
         discharge = (frame.price >= self.discharge_at_usd) & (
             fleet.soc > fleet.reserve_floor + self.discharge_margin
         )
-        charge = (frame.price <= self.charge_at_usd) & (fleet.soc < self.charge_below_soc)
+        recover = fleet.grid & (fleet.soc < fleet.reserve_floor)
+        cheap = (frame.price <= self.charge_at_usd) & (fleet.soc < self.charge_below_soc)
+        charge = recover | cheap
         action = np.where(discharge, "discharge", np.where(charge, "charge", "hold"))
         n = len(fleet.soc)
         return Decisions(action=action, src=np.full(n, "rule"), conf=np.full(n, np.nan))

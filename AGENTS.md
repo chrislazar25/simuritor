@@ -26,7 +26,7 @@ cd frontend && npm run build && npm run lint          # type-check + build, lint
 Swappable pieces, each behind a small interface the sim core depends on:
 - **Policy**: decides each home's action per tick (naive price rules tonight; rules + Jev later).
 - **Data source**: price, temperature and grid-event timeline per tick (Uri parquet files tonight; other crises or live data later).
-- **Faults / chaos**: things that happen to homes or infrastructure (fixed outage window tonight; device, telemetry and model failures later).
+- **Faults / chaos**: things that happen to homes or infrastructure (rolling outages plus a never-restored share tonight; device, telemetry and model failures later).
 - **Commitment source**: the MW promised ahead of time (none tonight, so `promised_mw` is null).
 
 Keep it lean: one interface per piece, one or two implementations. Add an abstraction only when a second use is in sight.

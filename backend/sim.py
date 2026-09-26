@@ -13,7 +13,7 @@ from datetime import timedelta
 import numpy as np
 
 from backend.data import TICK, Frame, UriParquetSource
-from backend.faults import Fault, FixedOutage
+from backend.faults import Fault, RollingOutage
 from backend.policy import FleetView, NaivePolicy, Policy
 from backend.schema import Household
 
@@ -39,8 +39,18 @@ class FleetConfig:
     reserve_floor: float = 0.20
     max_kw: float = 10.0
     """⚠ Max charge/discharge power per home."""
+    drain_base_kw: float = 0.3
+    drain_kw_per_degf: float = 0.042
+    """⚠ House load on backup, kW = base + per_degf * max(0, 65 - temp °F): 2.48 kW at 13 °F.
+
+    The spec's first formula (0.8 + 0.12 per °F, ~7 kW at 13 °F) is a whole home heating with
+    electric resistance at full comfort; it empties a full battery in 3.5-5.6 h. On backup, homes
+    shed load (thermostat setback, essential circuits only, and many Austin homes heat with gas),
+    so we scale it to about a third: a full average battery (30.7 kWh) lasts ~12 h at 13 °F
+    (25 kWh: ~10 h, 39.2 kWh: ~16 h). No single value makes both sizes last 10-14 h.
+    """
     drain_noise: float = 0.20
-    """⚠ Each home's load is the spec formula times a fixed factor in [1 - noise, 1 + noise]."""
+    """⚠ Each home's load is the formula times a fixed factor in [1 - noise, 1 + noise]."""
 
 
 def exact_mix[T](mix: Sequence[tuple[T, float]], n: int, rng: np.random.Generator) -> np.ndarray:
@@ -75,8 +85,9 @@ class Fleet:
         return len(self.ids)
 
     def drain_kw(self, temp_f: float) -> np.ndarray:
-        """House load, kW. ⚠ Spec formula: 0.8 + 0.12 per °F below 65 (≈ 7 kW at 13 °F)."""
-        return (0.8 + 0.12 * max(0.0, 65.0 - temp_f)) * self.drain_factor
+        """House load on backup, kW (see `FleetConfig.drain_kw_per_degf`)."""
+        cfg = self.config
+        return (cfg.drain_base_kw + cfg.drain_kw_per_degf * max(0.0, 65.0 - temp_f)) * self.drain_factor
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +190,7 @@ class Sim:
 
 
 def uri_replay(seed: int = 0, config: FleetConfig = FleetConfig(), frames: list[Frame] | None = None) -> Sim:
-    """Tonight's wiring: Uri frames, a seeded fleet, the naive policy and the fixed outage.
+    """Tonight's wiring: Uri frames, a seeded fleet, the naive policy and rolling outages.
 
     One seed, split into independent streams, so the fleet and the outage don't reshuffle each other.
     """
@@ -189,5 +200,5 @@ def uri_replay(seed: int = 0, config: FleetConfig = FleetConfig(), frames: list[
         frames=UriParquetSource().frames() if frames is None else frames,
         fleet=fleet,
         policy=NaivePolicy(),
-        faults=[FixedOutage(len(fleet), fault_rng)],
+        faults=[RollingOutage(len(fleet), fault_rng)],
     )
