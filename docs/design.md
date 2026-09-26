@@ -21,7 +21,7 @@ Status: **vibe locked Sat 10:30 → "Apple Maps" (see [Locked direction](#locked
 - `prefers-reduced-motion`: no particles, fixed light level.
 
 ### The HUD (instruments float over the map)
-- Glass panels (translucent surface + `backdrop-filter: blur`), fixed widths, tabular numbers: **top bar** (SIMURITOR, clock, EEA badge, price), **right stack** (counters: on grid / on battery / dark, revenue; chart: price + delivered/available MW), **bottom timeline** (play/pause, speed, reset, scrubber with Feb 15 02:00 outage marker and EEA band).
+- Glass panels (translucent surface + `backdrop-filter: blur`), fixed widths, tabular numbers: **top bar** (SIMURITOR, clock, EEA badge, price), **right stack** (counters: on grid / on battery / dark, revenue; chart: price + promised/delivered MW, shortfall shaded), **bottom timeline** (play/pause, speed, reset, scrubber with Feb 15 02:00 outage marker and EEA band).
 - UI chrome keeps one fixed theme regardless of scene light (unchanged rule).
 - Panels collapse so the map can be shown bare for the Loom.
 
