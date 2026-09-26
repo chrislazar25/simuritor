@@ -30,35 +30,18 @@ Jev, confidence gate, circuit breaker, chaos injection, policy comparison, day-a
 | EEA status | Normal → EEA3 Feb 15 01:25 → Normal Feb 19 09:00 (⚠ verify times) |
 | Naive policy | price ≥ $1,000 and charge > floor+10% → discharge · price ≤ $30 and charge < 90% → charge · else hold · home in outage → powers own house from battery (no export) |
 | Revenue | discharged kWh × price / 1000 per tick (charging costs the same way) |
-| Promised MW | fleet exportable power at tick start (homes on grid, above floor) — Saturday this becomes the day-ahead commitment |
+| Available MW | what the fleet could physically export this tick (homes on grid, above floor) |
+| Promised MW | MW committed ahead of time — `null` tonight (no commitment source); Saturday a day-ahead plan fills it |
 | Delivered MW | sum of actual discharge this tick |
 
 ## Home dot colours (map)
 green = on grid, idle/charging · blue = exporting · amber = grid out, running on battery · grey/dark = grid out and battery at 0 (the "lights out" state we want to avoid)
 
-## Tick message (backend → frontend, one per tick) — lock this first
-```json
-{
-  "type": "tick",
-  "i": 212,
-  "t": "2021-02-15T05:00:00-06:00",
-  "price": 9000.0,
-  "eea": "EEA3",
-  "temp_f": 8.1,
-  "homes": [
-    {"id": "h0001", "lat": 30.27, "lon": -97.74, "soc": 0.62, "grid": true,
-     "action": "discharge", "kw": 10.0, "src": "rule", "conf": null}
-  ],
-  "fleet": {
-    "promised_mw": 3.1, "delivered_mw": 2.8,
-    "homes_on_grid": 300, "homes_on_battery": 190, "homes_dark": 10,
-    "revenue_usd": 12450.0, "revenue_tick_usd": 630.0
-  }
-}
-```
-- `src` ∈ `rule | jev | fallback` and `conf` are null/rule tonight; they exist so Saturday needs no schema change.
-- Static homes fields (`lat`, `lon`, household) can move to a one-time `init` message if payload size matters at 2,000+ homes.
-- Control messages frontend → backend: `{"type":"play"}`, `{"type":"pause"}`, `{"type":"speed","ticks_per_sec":8}`, `{"type":"reset"}`.
+## Wire contract (locked)
+- **Source of truth:** `backend/schema.py` (fields, types, bounds, meanings). Generated from it: `schema/simuritor.schema.json`, `frontend/src/types.ts`. Examples: `fixtures/init_sample.json`, `fixtures/tick_sample.json`.
+- **Backend → frontend:** `init` (static home facts, replay window) once on connect and after every reset, then one `tick` per interval with the full per-home state (not deltas). Tick homes join init homes by `id`.
+- **Frontend → backend:** `play` · `pause` · `speed` · `reset` (reset = pause at tick 0 and resend `init`). Invalid messages are logged and ignored; the socket stays open.
+- **Sessions:** one replay per websocket connection; tabs don't affect each other.
 
 ## Repo layout
 ```
