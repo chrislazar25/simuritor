@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ClientMessage, InitMessage, ServerMessage, TickMessage } from './types.ts'
+import type { ClientMessage, FailoverEvent, InitMessage, ServerMessage, TickMessage } from './types.ts'
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
 /** The few numbers per tick the chart needs. Keeping whole ticks would hold 672 × 500 homes. */
 export type TickPoint = Pick<TickMessage, 'i' | 't' | 'price'> & Pick<TickMessage['fleet'], 'promised_mw' | 'delivered_mw'>
+
+/** A failover event with the tick it arrived in; `seq` is a stable key (events carry no id). */
+export type LoggedFailover = FailoverEvent & { t: string; seq: number }
+
+/** How many failovers the log keeps. */
+export const FAILOVER_LOG_SIZE = 8
 
 const RETRY_MIN_MS = 500
 const RETRY_MAX_MS = 5000
@@ -20,6 +26,7 @@ function socketUrl(path: string): string {
  *
  * `history` has one point per tick received since the last `init`. It's appended
  * per message, not per render, so no tick is lost when React batches fast ticks.
+ * `failovers` is the last few failover events, newest first, kept the same way.
  *
  * `playing` mirrors the server's play state, which it never sends: play/pause
  * set it, and the server pauses itself on every `init` (connect or reset) and
@@ -30,6 +37,7 @@ export function useTicks(path = '/ws') {
   const [init, setInit] = useState<InitMessage | null>(null)
   const [tick, setTick] = useState<TickMessage | null>(null)
   const [history, setHistory] = useState<TickPoint[]>([])
+  const [failovers, setFailovers] = useState<LoggedFailover[]>([])
   const [playing, setPlaying] = useState(false)
   const socket = useRef<WebSocket | null>(null)
 
@@ -38,6 +46,7 @@ export function useTicks(path = '/ws') {
     let retryMs = RETRY_MIN_MS
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     let nTicks = 0
+    let seq = 0
 
     function connect() {
       setStatus('connecting')
@@ -58,6 +67,7 @@ export function useTicks(path = '/ws') {
             setInit(msg)
             setTick(null)
             setHistory([])
+            setFailovers([])
             setPlaying(false)
             break
           case 'tick':
@@ -72,6 +82,11 @@ export function useTicks(path = '/ws') {
                 delivered_mw: msg.fleet.delivered_mw,
               },
             ])
+            if (msg.failovers.length > 0) {
+              // Events arrive oldest first within a tick; the log is newest first.
+              const logged = msg.failovers.map((e) => ({ ...e, t: msg.t, seq: seq++ })).reverse()
+              setFailovers((f) => [...logged, ...f].slice(0, FAILOVER_LOG_SIZE))
+            }
             if (msg.i === nTicks - 1) setPlaying(false)
             break
         }
@@ -104,5 +119,5 @@ export function useTicks(path = '/ws') {
     return true
   }, [])
 
-  return { status, init, tick, history, playing, send }
+  return { status, init, tick, history, failovers, playing, send }
 }

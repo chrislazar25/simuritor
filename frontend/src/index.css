@@ -244,6 +244,22 @@ body {
   touch-action: none;
 }
 
+.floating-title {
+  flex: none;
+}
+
+/* Header stats squeeze (with an ellipsis) before the title or the expand button do. */
+.failover-summary {
+  flex: 1;
+  min-width: 0;
+  margin-left: 12px;
+  overflow: hidden;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .floating-header:active {
   cursor: grabbing;
 }
@@ -267,6 +283,42 @@ body {
 
 .floating-body {
   padding: 8px 8px 4px;
+}
+
+.failover-log {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  font-family: var(--font-num);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.failover-log li {
+  padding: 2px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failover-empty {
+  margin: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.marker[data-kind='warned'] {
+  color: var(--state-backup);
+}
+
+.marker[data-kind='silent'] {
+  color: var(--text);
+}
+
+.uncovered {
+  color: var(--grid-off);
 }
 
 .floating-resize {

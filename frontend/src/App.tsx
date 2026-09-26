@@ -1,14 +1,15 @@
 import { Charts } from './Charts.tsx'
 import { Controls } from './Controls.tsx'
 import { Counters } from './Counters.tsx'
+import { FailoverLog, FailoverSummary } from './FailoverLog.tsx'
 import { FloatingPanel } from './FloatingPanel.tsx'
 import { formatClock, formatPrice } from './format.ts'
 import { FleetMap } from './Map.tsx'
 import { useTicks } from './useTicks.ts'
 
-// Layout from docs/design.md: top bar, map (the scene), right panel with counters, chart floating over the map.
+// Layout from docs/design.md: top bar, map (the scene), right panel with counters, chart and failover log floating over the map.
 export default function App() {
-  const { status, init, tick, history, playing, send } = useTicks()
+  const { status, init, tick, history, failovers, playing, send } = useTicks()
   const finished = init !== null && tick?.i === init.n_ticks - 1
 
   return (
@@ -35,8 +36,17 @@ export default function App() {
       <aside className="panel">
         <Counters fleet={tick?.fleet ?? null} />
       </aside>
-      <FloatingPanel title="Price · fleet MW" storageKey="simuritor.chart-panel" initialSize={{ w: 520, h: 300 }}>
+      <FloatingPanel title="Price · fleet MW" storageKey="simuritor.chart-panel" initial={{ w: 520, h: 300 }}>
         <Charts init={init} history={history} />
+      </FloatingPanel>
+      {/* Top-left of the map, clear of the chart's bottom-left default. */}
+      <FloatingPanel
+        title="Failovers"
+        storageKey="simuritor.failover-panel"
+        initial={{ w: 460, h: 220, x: 16, y: 64 }}
+        summary={<FailoverSummary fleet={tick?.fleet ?? null} />}
+      >
+        <FailoverLog events={failovers} />
       </FloatingPanel>
     </div>
   )

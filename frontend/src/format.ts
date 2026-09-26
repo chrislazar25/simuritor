@@ -46,3 +46,14 @@ export function formatPct(fraction: number): string {
 export function formatMwh(mwh: number): string {
   return `${mwh.toFixed(1)} MWh`
 }
+
+/** "Feb 15 03:15" (Austin time), for log lines. */
+export function formatStamp(iso: string): string {
+  const p = Object.fromEntries(clockFormat.formatToParts(new Date(iso)).map((part) => [part.type, part.value]))
+  return `${p.month} ${p.day} ${p.hour}:${p.minute}`
+}
+
+/** "11 s"; "<1 s" for the near-instant covers of warned failovers. */
+export function formatSeconds(s: number): string {
+  return s < 1 ? '<1 s' : `${Math.round(s)} s`
+}

@@ -2,6 +2,9 @@ import { useEffect, useState, type PointerEvent as ReactPointerEvent, type React
 
 type Rect = { x: number; y: number; w: number; h: number }
 
+/** Where the panel starts before the user moves it; bottom-left of the viewport by default. */
+type Initial = { w: number; h: number; x?: number; y?: number }
+
 const MIN_W = 320
 const MIN_H = 200
 const MARGIN = 16
@@ -15,14 +18,16 @@ function clamp(r: Rect): Rect {
   return { w, h, x: Math.min(Math.max(r.x, 0), vw - w), y: Math.min(Math.max(r.y, 0), vh - h) }
 }
 
-function load(key: string, initial: Omit<Rect, 'x' | 'y'>): Rect {
+function load(key: string, initial: Initial): Rect {
   try {
     const saved = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Rect> | null
     if (saved && [saved.x, saved.y, saved.w, saved.h].every(Number.isFinite)) return clamp(saved as Rect)
   } catch {
     // Storage blocked or bad JSON: fall through to the default spot.
   }
-  return clamp({ ...initial, x: MARGIN, y: window.innerHeight - initial.h - MARGIN })
+  const x = initial.x ?? MARGIN
+  const y = initial.y ?? window.innerHeight - initial.h - MARGIN
+  return clamp({ ...initial, x, y })
 }
 
 function save(key: string, rect: Rect) {
@@ -36,20 +41,22 @@ function save(key: string, rect: Rect) {
 /**
  * A glass panel floating over the map (docs/design.md, "The HUD"). Drag it by the header, resize
  * it from the bottom-right corner, double-click the header to expand it; Esc collapses. Position
- * and size persist in localStorage under `storageKey`.
+ * and size persist in localStorage under `storageKey`. `summary` sits in the header after the title.
  */
 export function FloatingPanel({
   title,
   storageKey,
-  initialSize,
+  initial,
+  summary,
   children,
 }: {
   title: string
   storageKey: string
-  initialSize: { w: number; h: number }
+  initial: Initial
+  summary?: ReactNode
   children: ReactNode
 }) {
-  const [rect, setRect] = useState(() => load(storageKey, initialSize))
+  const [rect, setRect] = useState(() => load(storageKey, initial))
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
@@ -114,7 +121,8 @@ export function FloatingPanel({
           if (!(e.target as HTMLElement).closest('button')) setExpanded((x) => !x)
         }}
       >
-        <span>{title}</span>
+        <span className="floating-title">{title}</span>
+        {summary}
         <button
           type="button"
           aria-label={expanded ? 'Collapse' : 'Expand'}
