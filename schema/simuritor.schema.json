@@ -1,0 +1,369 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WireMessage",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ServerMessage"
+    },
+    {
+      "$ref": "#/$defs/ClientMessage"
+    }
+  ],
+  "$defs": {
+    "FleetStats": {
+      "additionalProperties": false,
+      "properties": {
+        "promised_mw": {
+          "description": "Exportable power at tick start: homes on grid, above reserve floor.",
+          "minimum": 0,
+          "type": "number"
+        },
+        "delivered_mw": {
+          "description": "Actual fleet discharge to the grid this tick.",
+          "minimum": 0,
+          "type": "number"
+        },
+        "homes_on_grid": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "homes_on_battery": {
+          "description": "Grid down, battery still powering the house.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "homes_dark": {
+          "description": "Grid down and battery empty: lights out.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revenue_usd": {
+          "description": "Cumulative since replay start; charging at negative prices earns money.",
+          "type": "number"
+        },
+        "revenue_tick_usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "promised_mw",
+        "delivered_mw",
+        "homes_on_grid",
+        "homes_on_battery",
+        "homes_dark",
+        "revenue_usd",
+        "revenue_tick_usd"
+      ],
+      "title": "FleetStats",
+      "type": "object"
+    },
+    "HomeInfo": {
+      "additionalProperties": false,
+      "description": "Static facts about one home, sent once in `init`.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "household": {
+          "enum": [
+            "standard",
+            "medical",
+            "elderly",
+            "wfh"
+          ],
+          "type": "string"
+        },
+        "capacity_kwh": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "lat",
+        "lon",
+        "household",
+        "capacity_kwh"
+      ],
+      "title": "HomeInfo",
+      "type": "object"
+    },
+    "HomeState": {
+      "additionalProperties": false,
+      "description": "Per-tick state of one home. Joined to `HomeInfo` by `id`.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "soc": {
+          "description": "State of charge, 0-1.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "grid": {
+          "description": "True if the home has grid power this tick.",
+          "type": "boolean"
+        },
+        "action": {
+          "enum": [
+            "charge",
+            "discharge",
+            "hold",
+            "backup"
+          ],
+          "type": "string"
+        },
+        "kw": {
+          "description": "Battery power magnitude; direction comes from `action`.",
+          "minimum": 0,
+          "type": "number"
+        },
+        "src": {
+          "enum": [
+            "rule",
+            "jev",
+            "fallback"
+          ],
+          "type": "string"
+        },
+        "conf": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Decision confidence, 0-1; null for rule decisions."
+        }
+      },
+      "required": [
+        "id",
+        "soc",
+        "grid",
+        "action",
+        "kw",
+        "src",
+        "conf"
+      ],
+      "title": "HomeState",
+      "type": "object"
+    },
+    "InitMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "init",
+          "default": "init",
+          "type": "string"
+        },
+        "start": {
+          "description": "Timestamp of tick 0.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "end": {
+          "description": "Exclusive end of the replay window.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "n_ticks": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "homes": {
+          "items": {
+            "$ref": "#/$defs/HomeInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "start",
+        "end",
+        "n_ticks",
+        "homes"
+      ],
+      "title": "InitMessage",
+      "type": "object"
+    },
+    "TickMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "tick",
+          "default": "tick",
+          "type": "string"
+        },
+        "i": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "t": {
+          "description": "Interval start, ISO 8601 with UTC offset.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "price": {
+          "description": "Real-time settlement point price, $/MWh. Can be negative.",
+          "type": "number"
+        },
+        "eea": {
+          "enum": [
+            "Normal",
+            "EEA1",
+            "EEA2",
+            "EEA3"
+          ],
+          "type": "string"
+        },
+        "temp_f": {
+          "type": "number"
+        },
+        "homes": {
+          "items": {
+            "$ref": "#/$defs/HomeState"
+          },
+          "type": "array"
+        },
+        "fleet": {
+          "$ref": "#/$defs/FleetStats"
+        }
+      },
+      "required": [
+        "type",
+        "i",
+        "t",
+        "price",
+        "eea",
+        "temp_f",
+        "homes",
+        "fleet"
+      ],
+      "title": "TickMessage",
+      "type": "object"
+    },
+    "ServerMessage": {
+      "title": "ServerMessage",
+      "discriminator": {
+        "mapping": {
+          "init": "#/$defs/InitMessage",
+          "tick": "#/$defs/TickMessage"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/InitMessage"
+        },
+        {
+          "$ref": "#/$defs/TickMessage"
+        }
+      ]
+    },
+    "PauseMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "pause",
+          "default": "pause",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PauseMessage",
+      "type": "object"
+    },
+    "PlayMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "play",
+          "default": "play",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PlayMessage",
+      "type": "object"
+    },
+    "ResetMessage": {
+      "additionalProperties": false,
+      "description": "Pause at tick 0 and resend `init`.",
+      "properties": {
+        "type": {
+          "const": "reset",
+          "default": "reset",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ResetMessage",
+      "type": "object"
+    },
+    "SpeedMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "speed",
+          "default": "speed",
+          "type": "string"
+        },
+        "ticks_per_sec": {
+          "exclusiveMinimum": 0,
+          "maximum": 64,
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "ticks_per_sec"
+      ],
+      "title": "SpeedMessage",
+      "type": "object"
+    },
+    "ClientMessage": {
+      "title": "ClientMessage",
+      "discriminator": {
+        "mapping": {
+          "pause": "#/$defs/PauseMessage",
+          "play": "#/$defs/PlayMessage",
+          "reset": "#/$defs/ResetMessage",
+          "speed": "#/$defs/SpeedMessage"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PlayMessage"
+        },
+        {
+          "$ref": "#/$defs/PauseMessage"
+        },
+        {
+          "$ref": "#/$defs/SpeedMessage"
+        },
+        {
+          "$ref": "#/$defs/ResetMessage"
+        }
+      ]
+    }
+  }
+}
