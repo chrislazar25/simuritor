@@ -99,7 +99,7 @@ Maximise **net revenue** = capacity payment + energy − shortfall penalty − c
   - `homes_dark_by_contract`;
   - `headroom_mwh`;
   - `penalty_usd` (cumulative);
-  - `promise_kept_pct`;
+  - `promise_kept`;
   - `failovers_warned`;
   - `failovers_silent`;
   - `failover_p50_s`;

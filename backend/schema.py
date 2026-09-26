@@ -105,7 +105,7 @@ class FleetStats(Wire):
     """Revenue earned this tick alone."""
     penalty_usd: Annotated[float, Field(ge=0)]
     """Cumulative shortfall penalties since replay start (shortfall x interval price)."""
-    promise_kept_pct: Fraction | None
+    promise_kept: Fraction | None
     """Share of called intervals where delivery met the promise, 0-1; null until a call has happened."""
     failovers_warned: Annotated[int, Field(ge=0)]
     """Cumulative failovers where the home warned before dropping out."""

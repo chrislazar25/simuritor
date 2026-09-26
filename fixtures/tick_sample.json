@@ -201,7 +201,7 @@
     "revenue_usd": 2084.21,
     "revenue_tick_usd": 240.46,
     "penalty_usd": 0.0,
-    "promise_kept_pct": null,
+    "promise_kept": null,
     "failovers_warned": 0,
     "failovers_silent": 0,
     "failovers_uncovered": 0,

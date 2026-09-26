@@ -132,7 +132,7 @@ export interface FleetStats {
   /**
    * Share of called intervals where delivery met the promise, 0-1; null until a call has happened.
    */
-  promise_kept_pct: number | null;
+  promise_kept: number | null;
   /**
    * Cumulative failovers where the home warned before dropping out.
    */
