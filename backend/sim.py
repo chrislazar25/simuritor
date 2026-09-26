@@ -10,6 +10,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
+from typing import Any
 
 import numpy as np
 
@@ -217,7 +218,7 @@ class Sim:
 
         forecast = partial(forecast_min_f, self.frames, self.i)
         reserve = read_only(fleet.reserve_kwh(forecast))
-        owed = None if self.commitment is None else self.commitment.commit(frame)
+        owed = None if self.commitment is None else self.commitment.commit(frame, forecast)
         view = FleetView(
             soc=fleet.soc,
             grid=grid,
@@ -300,9 +301,11 @@ def uri_replay(
     frames: list[Frame] | None = None,
     policy: str = "contract",
     contract_size: float | None = UtilityContract.size_frac,
+    **contract_options: Any,
 ) -> Sim:
     """Tonight's wiring: Uri frames, a seeded fleet, a policy from `POLICIES`, rolling outages,
-    and a utility contract of `contract_size` x nameplate (None: no contract, `promised_mw` null).
+    and a utility contract of `contract_size` x nameplate (None: no contract, `promised_mw` null)
+    with any other `UtilityContract` options (e.g. `emergency_uncapped=True`).
 
     One seed, split into independent streams, so the fleet and the outage don't reshuffle each other.
     """
@@ -314,5 +317,7 @@ def uri_replay(
         fleet=fleet,
         policy=POLICIES[policy](),
         faults=[RollingOutage(len(fleet), fault_rng)],
-        commitment=None if contract_size is None else UtilityContract(nameplate_mw, size_frac=contract_size),
+        commitment=None
+        if contract_size is None
+        else UtilityContract(nameplate_mw, size_frac=contract_size, **contract_options),
     )

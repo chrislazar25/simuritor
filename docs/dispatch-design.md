@@ -36,6 +36,10 @@ Every battery's energy is split into layers, filled bottom-up:
 ### Utility contract (modelled on Base's utility deals)
 - Size = **contract % × fleet nameplate** (default 60% of 500 × 12 kW = 3.6 MW).
 - **Called when price ≥ $1,000/MWh**, for at most **1.5 h (6 ticks)** per call, then a **2 h cooldown**. The trigger can be configured to EEA or both.
+- At most **one call per day** (Central time; `max_calls_per_day`), and only **06:00–22:00**. A call still running at 22:00 ends.
+- Two flags, both off by default:
+  - `skip_before_storm`: no call while the forecast minimum over the next 24 h is below 20°F, so batteries stay full for backup.
+  - `emergency_uncapped` (the stress case): during an EEA a call may start whatever the daily limit says, and it doesn't count against it.
 - Paid two ways:
   - a **capacity payment** ($/MW-week, whether or not it's called; default $2,000/MW-week ≈ $100/kW-yr, in the range of a peaker's cost of new entry);
   - energy delivered during a call, paid at the interval price.
@@ -46,8 +50,9 @@ Every battery's energy is split into layers, filled bottom-up:
 2. **Protect the reserve** (tier × forecast temperature). Exports also stop at the fleet's reserve floor (20% SoC, the battery's minimum operating SoC), so a home's export floor is whichever is higher.
 3. **Utility call active?** Deliver the contracted MW. Split it across on-grid homes in proportion to their energy above reserve, capped at max kW per home; what a capped home can't take goes to the others.
 4. **Hold the buffer.** The buffer is sized at fleet level, **`buffer_frac` × promised MW** (default 20%), and held per battery pro rata to each home's call share: a home with share *s* keeps `buffer_frac` × *s* spare, in **power** (its other exports stay ≤ max kW − *s* − buffer) and in **energy** (it keeps reserve + (*s* + buffer) × the rest of the call). It's what failover draws on.
-5. **Use headroom**, what's left after 2–4 and after keeping the **next call's energy** above the reserve: the home's pro-rata share of the contract × `max_call_ticks` × (1 + `buffer_frac`), during a call on top of the rest of this one. It can run during a call or its cooldown: export if price ≥ $1,000; charge if price ≤ $30, or back up to the reserve if on grid below it (whatever the price); otherwise hold.
-6. **Cold snap forecast in the next 24 h?** (below 32°F, behind a flag, default on) Charge to 95% while the price is ≤ $200.
+5. **Be call-ready.** Every on-grid home keeps the **next call's energy** above its reserve: its share of the contract × `max_call_ticks` × (1 + `buffer_frac`), capped at its room above the reserve. The share is planned pro rata to room above the reserve (capacity − reserve), not current charge, so a home at its reserve still gets a share. Outside a call, a home below that level **charges up to it whatever the price**, because keeping the promise avoids a penalty at the same price. During a call only the reserve is recovered, since charging then would just net against the fleet's own delivery.
+6. **Use headroom**, what's left after 2–5 (during a call, on top of the rest of it). It can run during a call or its cooldown: export if price ≥ $1,000; charge if price ≤ $30; otherwise hold.
+7. **Cold snap forecast in the next 24 h?** (below 32°F, behind a flag, default on) Charge to 95% while the price is ≤ $200.
 
 The policy stays behind the existing `Policy` interface. `NaivePolicy` remains as the baseline for comparison.
 
@@ -123,6 +128,12 @@ Maximise **net revenue** = capacity payment + energy − shortfall penalty − c
 | Assumption | Value | Basis |
 |---|---|---|
 | Utility contract shape | MW capacity, called at peaks, ~1.5 h at full power | Austin Energy × Base 40 MW agreement (APPA) |
+| Calls per day | at most 1 per Central-time day (`max_calls_per_day`) | GVEC × Base Power: events "not to exceed one event per day on average" |
+| Call window | 06:00–22:00 Central | Austin Energy Power Partner Battery: events between 6am and 10pm |
+| Event length | 1.5 h (6 ticks) | ⚠ Austin Energy's programme events run 2–3 h; we keep the shorter Base agreement figure above |
+| Events per year | not capped (a 10-day replay at 1/day stays far below it) | Austin Energy: ≤ 40 events a year, **excluding grid emergencies**, which is the `emergency_uncapped` stress case |
+| No calls before a storm | off by default (`skip_before_storm`: forecast < 20°F within 24 h) | Austin Energy: typically no events when a severe storm is forecast. ⚠ The 20°F / 24 h threshold is ours |
+| Battery floor | never below 20% SoC for export; a backup reserve per home | Austin Energy: never discharged below 20%; GVEC × Base: members keep a minimum backup reserve |
 | Call trigger | price threshold | ADER dispatch is limited by bid price vs market price (ERCOT ADER Phase 3 doc) |
 | Heartbeat | 2 s | ADER real-time telemetry interval |
 | Per-home reserve | declared per battery | ADER registration asks for each battery's min operating SoC |
@@ -133,6 +144,8 @@ Maximise **net revenue** = capacity payment + energy − shortfall penalty − c
 
 Sources:
 - [Austin Energy × Base Power](https://www.publicpower.org/periodical/article/austin-energy-enters-agreement-with-base-power-deploy-40-mw-residential-battery-storage)
+- [GVEC × Base Power](https://www.gvec.org/gvec-x-base-power/)
+- [Austin Energy Power Partner Battery](https://austinenergy.com/energy-efficiency/rebates-incentives/residential/appliances-equipment/pp-battery)
 - [ERCOT ADER Phase 3 governing document](https://www.ercot.com/files/docs/2025/06/16/4.3-Aggregate-Distributed-Energy-Resource-ADER-Pilot-Project-Phase-3.pdf)
 - [ERCOT ADER pilot](https://www.ercot.com/mktrules/pilots/ader)
 

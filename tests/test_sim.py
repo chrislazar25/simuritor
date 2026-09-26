@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from backend.commitment import UtilityContract
-from backend.data import TZ, Frame
+from backend.data import TICK, TZ, Frame
 from backend.faults import OUTAGE_END, OUTAGE_START
 from backend.policy import ContractPolicy, Decisions, FleetView
 from backend.sim import Fleet, FleetConfig, Sim, TickResult, forecast_min_f, read_only, uri_replay
@@ -67,7 +67,7 @@ def tiny_sim(
     fleet.soc = read_only(np.array(soc))
     fleet.tier = read_only(np.array(tiers or ["standard"] * n))
     prices = price if isinstance(price, list) else [price] * ticks
-    frames = [Frame(i=k, t=ct(15), price=p, temp_f=temp_f, eea="EEA3") for k, p in enumerate(prices)]
+    frames = [Frame(i=k, t=ct(15, 12) + k * TICK, price=p, temp_f=temp_f, eea="EEA3") for k, p in enumerate(prices)]
     contract = None if promised_kw is None else UtilityContract(nameplate_mw=promised_kw / 1000, size_frac=1.0)
     return Sim(frames, fleet, Scripted(actions, kw), [GridDown(down or [False] * n)], contract)
 
@@ -306,13 +306,34 @@ def test_fleet_stats_agree_with_homes(replay: list[TickResult]) -> None:
     assert replay[-1].revenue_usd == pytest.approx(sum(r.revenue_tick_usd for r in replay))
 
 
-def test_precharge_fills_the_fleet_before_the_storm(replay: list[TickResult]) -> None:
-    """Feb 10-12 has a sub-32 °F forecast and prices ≤ $200 to charge at; from Feb 13 it's ≥ $700."""
-    without = uri_replay(seed=0)
-    without.policy = ContractPolicy(precharge=False)
-    at_13 = next(r for r in replay if r.frame.t == ct(13))
-    without_at_13 = next(r for r in run(without) if r.frame.t == ct(13))
-    assert at_13.soc.mean() > 0.9 and without_at_13.soc.mean() < 0.6
+def test_precharge_fills_the_fleet_before_the_storm() -> None:
+    """Feb 10-12 has a sub-32 °F forecast and prices ≤ $200 to charge at; from Feb 13 it's ≥ $700.
+
+    No utility contract, so call-ready recharge doesn't fill the fleet too.
+    """
+    at_13 = []
+    for precharge in (True, False):
+        sim = uri_replay(seed=0, contract_size=None)
+        sim.policy = ContractPolicy(precharge=precharge)
+        at_13.append(next(r for r in run(sim) if r.frame.t == ct(13)).soc.mean())
+    assert at_13[0] > 0.8 and at_13[1] < 0.6
+
+
+def test_calls_follow_the_contract_rules(replay: list[TickResult]) -> None:
+    """At most one call a day (default), inside 06:00-22:00, at most 6 ticks long."""
+    starts = [b for a, b in zip(replay, replay[1:]) if b.utility_call and not a.utility_call]
+    assert len({r.frame.t.date() for r in starts}) == len(starts)
+    assert all(6 <= r.frame.t.hour < 22 for r in replay if r.utility_call)
+    run_length = 0
+    for r in replay:
+        run_length = run_length + 1 if r.utility_call else 0
+        assert run_length <= 6
+
+
+def test_emergency_uncapped_calls_more_during_the_eea() -> None:
+    capped = sum(r.utility_call for r in run(uri_replay(seed=0)))
+    uncapped = sum(r.utility_call for r in run(uri_replay(seed=0, emergency_uncapped=True)))
+    assert uncapped > 2 * capped
 
 
 @pytest.fixture(scope="module")

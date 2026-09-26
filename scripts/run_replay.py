@@ -1,7 +1,7 @@
 """Run the full Uri replay headless and print a daily summary.
 
 Usage: uv run python -m scripts.run_replay [--seed N] [--homes N] [--policy contract|naive]
-       [--contract-size FRAC | --no-contract]
+       [--contract-size FRAC | --no-contract] [--emergency-uncapped] [--skip-before-storm]
 """
 
 import argparse
@@ -24,11 +24,24 @@ def main() -> None:
         "--contract-size", type=float, default=UtilityContract.size_frac, help="share of fleet nameplate"
     )
     parser.add_argument("--no-contract", action="store_true", help="no utility contract (promised_mw null)")
+    parser.add_argument(
+        "--emergency-uncapped", action="store_true", help="during an EEA, ignore the daily call limit"
+    )
+    parser.add_argument(
+        "--skip-before-storm", action="store_true", help="no call while the next 24 h forecast goes below 20°F"
+    )
     args = parser.parse_args()
 
     contract_size = None if args.no_contract else args.contract_size
+    options = {"emergency_uncapped": args.emergency_uncapped, "skip_before_storm": args.skip_before_storm}
+    if contract_size is None:
+        options = {}
     sim = uri_replay(
-        seed=args.seed, config=FleetConfig(n_homes=args.homes), policy=args.policy, contract_size=contract_size
+        seed=args.seed,
+        config=FleetConfig(n_homes=args.homes),
+        policy=args.policy,
+        contract_size=contract_size,
+        **options,
     )
     started = time.perf_counter()
     rows = []
@@ -75,6 +88,7 @@ def main() -> None:
         revenue_usd=("revenue_usd", "last"),
     )
     contract = "no contract" if contract_size is None else f"contract {contract_size:.0%} of nameplate"
+    contract += "".join(f", {name.replace('_', ' ')}" for name, on in options.items() if on)
     print(
         f"Uri replay: {len(df)} ticks, {args.homes} homes, seed {args.seed}, "
         f"{args.policy} policy, {contract}, {elapsed * 1000:.0f} ms\n"
