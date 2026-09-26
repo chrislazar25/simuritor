@@ -99,11 +99,15 @@ class ContractPolicy:
        floor, none above max kW or what it holds this tick (the excess goes to the others).
     4. Buffer: a home with a call share keeps `buffer_frac` x its share spare, in power and in
        energy for the rest of the call. Fleet buffer = `buffer_frac` x promised MW.
-    5. Headroom, what's left after 2-4 and after keeping the next call's energy (its share of
-       the contract, split the same way, x `max_call_ticks` x (1 + `buffer_frac`), in or out of a
-       call): export it if the price is at least `export_at_usd`. Else charge if the price is at
-       most `charge_at_usd`, or back up to the floor if on grid below it.
-    6. Pre-charge (`precharge`): a cold snap in the forecast and a moderate price: charge to `precharge_soc`.
+    5. Call-ready: every on-grid home keeps the next call's energy above its floor: its share
+       of the contract x `max_call_ticks` x (1 + `buffer_frac`). The share is planned pro rata to
+       room above the floor (capacity - floor), not current charge, so an empty home still gets
+       one. Outside a call, a home below that level charges up to it whatever the price: keeping
+       the promise avoids a penalty at the same price. (Not during a call, where charging would
+       only net against the fleet's own delivery; there only the reserve is recovered.)
+    6. Headroom, what's left after 2-5 (during a call, on top of the rest of it): export it if
+       the price is at least `export_at_usd`. Else charge if the price is at most `charge_at_usd`.
+    7. Pre-charge (`precharge`): a cold snap in the forecast and a moderate price: charge to `precharge_soc`.
     """
 
     export_at_usd: float = 1000.0
@@ -126,21 +130,23 @@ class ContractPolicy:
         above = np.where(fleet.grid, np.maximum(energy - floor, 0.0), 0.0)
 
         share = np.zeros(n)
-        held_kw = held_kwh = np.zeros(n)
+        held_kw = ready_kwh = np.zeros(n)
         c = fleet.commitment
         if c is not None:
-            cap_kw = np.minimum(fleet.max_kw, above / h)
-            # Keep the next call's energy, so headroom sold now (in a cooldown, say) can't starve it.
-            next_share = pro_rata(c.contract_mw * 1000, weight=above, cap=cap_kw)
-            held_kwh = (1 + c.buffer_frac) * next_share * c.max_call_ticks * h
-            if c.call:
-                share = pro_rata(c.promised_mw * 1000, weight=above, cap=cap_kw)
-                held_kw = (1 + c.buffer_frac) * share
-                held_kwh = held_kwh + held_kw * c.ticks_left * h
+            room = np.where(fleet.grid, np.maximum(cap - floor, 0.0), 0.0)
+            next_share = pro_rata(c.contract_mw * 1000, weight=room, cap=np.full(n, fleet.max_kw))
+            ready_kwh = np.minimum((1 + c.buffer_frac) * next_share * c.max_call_ticks * h, room)
+        held_kwh = ready_kwh
+        if c is not None and c.call:
+            share = pro_rata(c.promised_mw * 1000, weight=above, cap=np.minimum(fleet.max_kw, above / h))
+            held_kw = (1 + c.buffer_frac) * share
+            held_kwh = ready_kwh + held_kw * c.ticks_left * h
         headroom_kw = np.clip(np.minimum(fleet.max_kw - held_kw, (above - held_kwh) / h), 0.0, None)
         export_kw = share + (headroom_kw if frame.price >= self.export_at_usd else 0.0)
 
-        charge_kw = np.where(fleet.grid & (energy < floor), np.minimum(fleet.max_kw, (floor - energy) / h), 0.0)
+        # Back up to the reserve, or outside a call to call-ready, whatever the price.
+        target = floor if c is not None and c.call else floor + ready_kwh
+        charge_kw = np.where(fleet.grid & (energy < target), np.minimum(fleet.max_kw, (target - energy) / h), 0.0)
         if self.precharge and frame.price <= self.precharge_max_usd:
             if fleet.forecast_min_f(self.precharge_hours) < self.precharge_below_f:
                 precharge_kw = np.clip((self.precharge_soc * cap - energy) / h, 0.0, fleet.max_kw)
