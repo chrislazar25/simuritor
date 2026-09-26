@@ -45,10 +45,12 @@ green = on grid, idle/charging · blue = exporting · amber = grid out, running 
 
 ## Repo layout
 ```
-backend/  app.py (FastAPI + ws) · sim.py (fleet, tick) · policy.py (Policy interface, NaivePolicy) · data.py (loaders, EEA table)
+backend/  app.py (FastAPI + ws, ReplaySession) · sim.py (fleet, tick) · policy.py (Policy interface, NaivePolicy) · faults.py (Fault interface, FixedOutage) · data.py (loaders, EEA table) · serialize.py (sim → wire)
 frontend/ Vite + React: Map.tsx (MapLibre + Carto) · Charts.tsx (Recharts) · Controls.tsx · useTicks.ts (ws hook)
 data/     parquet files (copied from prep repo)
 ```
 
 ## Done means
-Play → 672 ticks stream without crashing, dots change colour when outages hit Feb 15 02:00, revenue counter climbs through Feb 16–18, reset works. Commit + push.
+Play → 672 ticks stream without crashing, dots change colour when outages hit Feb 15 02:00, reset works. Commit + push.
+
+(The original line also said "revenue counter climbs through Feb 16–18". With real Uri prices the naive policy sells its reserve on Feb 13 and can't recharge, so revenue is flat after Feb 13. That's the baseline's story, not a bug: see `docs/notes.md`, "Data findings".)

@@ -2,8 +2,8 @@
 
 The websocket handler only moves messages. It pumps a session's outgoing
 messages to the socket and hands validated client messages back to it. What
-gets sent is up to the session, so the real replay loop replaces
-`FixtureSession` without touching the connection code.
+gets sent is up to the session: `ReplaySession` steps a fresh sim for each
+connection.
 
 Run: uv run uvicorn backend.app:app --reload --port 8000
 """
@@ -11,8 +11,7 @@ Run: uv run uvicorn backend.app:app --reload --port 8000
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
-from pathlib import Path
+from collections.abc import AsyncIterator, Callable
 from typing import Protocol
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -21,12 +20,17 @@ from pydantic import ValidationError
 from backend.schema import (
     ClientMessage,
     InitMessage,
+    PauseMessage,
+    PlayMessage,
+    ResetMessage,
+    SpeedMessage,
     TickMessage,
     client_message,
-    server_message,
 )
+from backend.serialize import init_message, tick_message
+from backend.sim import Sim, uri_replay
 
-FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
+DEFAULT_TICKS_PER_SEC = 8.0
 
 # uvicorn configures this logger, so our lines show up in the server console.
 log = logging.getLogger("uvicorn.error")
@@ -46,35 +50,59 @@ class Session(Protocol):
         ...
 
 
-def load_fixture[M: (InitMessage, TickMessage)](name: str, kind: type[M]) -> M:
-    msg = server_message.validate_json((FIXTURES / name).read_text())
-    if not isinstance(msg, kind):
-        raise TypeError(f"{name}: expected {kind.__name__}, got {type(msg).__name__}")
-    return msg
+class ReplaySession:
+    """Starts paused at tick 0. Play steps the sim at `ticks_per_sec`; it pauses itself after the last tick.
 
-
-class FixtureSession:
-    """Stub until the replay loop lands: the sample init, then the sample tick once per interval.
-
-    Only `i` and `t` advance between ticks, so a client can see them arriving.
+    Reset builds a fresh sim (same seed, so the same replay), pauses, and resends `init`.
+    Speed survives a reset.
     """
 
-    def __init__(self, interval_s: float = 1.0) -> None:
-        self.init = load_fixture("init_sample.json", InitMessage)
-        self.tick = load_fixture("tick_sample.json", TickMessage)
-        self.interval_s = interval_s
+    def __init__(self, new_sim: Callable[[], Sim] = uri_replay) -> None:
+        self.new_sim = new_sim
+        self.sim = new_sim()
+        self.playing = False
+        self.ticks_per_sec = DEFAULT_TICKS_PER_SEC
+        self.reset_requested = False
+        self.wake = asyncio.Event()
+        """Set by `handle` so a waiting or sleeping `messages` loop re-checks its state now."""
 
     async def messages(self) -> AsyncIterator[InitMessage | TickMessage]:
-        yield self.init
-        step = (self.init.end - self.init.start) / self.init.n_ticks
-        i = self.tick.i
+        loop = asyncio.get_running_loop()
+        yield init_message(self.sim)
         while True:
-            yield self.tick.model_copy(update={"i": i, "t": self.init.start + i * step})
-            i = (i + 1) % self.init.n_ticks
-            await asyncio.sleep(self.interval_s)
+            if self.reset_requested:
+                self.reset_requested = False
+                self.sim = self.new_sim()
+                yield init_message(self.sim)
+            elif self.playing and not self.sim.done:
+                due = loop.time() + 1 / self.ticks_per_sec
+                yield tick_message(self.sim.fleet, self.sim.step())
+                if self.sim.done:
+                    self.playing = False
+                # Sleep only what's left of the interval, so stepping and sending don't slow the rate.
+                await self.sleep(max(0.0, due - loop.time()))
+            else:
+                await self.wake.wait()
+                self.wake.clear()
+
+    async def sleep(self, seconds: float) -> None:
+        """Wait between ticks, but wake early for pause, speed or reset."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self.wake.wait(), seconds)
+        self.wake.clear()
 
     def handle(self, msg: ClientMessage) -> None:
-        log.info("client message (stub ignores it): %s", msg.model_dump_json())
+        match msg:
+            case PlayMessage():
+                self.playing = not self.sim.done
+            case PauseMessage():
+                self.playing = False
+            case SpeedMessage(ticks_per_sec=tps):
+                self.ticks_per_sec = tps
+            case ResetMessage():
+                self.playing = False
+                self.reset_requested = True
+        self.wake.set()
 
 
 @app.get("/health")
@@ -85,7 +113,7 @@ def health() -> dict[str, str]:
 @app.websocket("/ws")
 async def replay_socket(websocket: WebSocket) -> None:
     await websocket.accept()
-    session: Session = FixtureSession()
+    session: Session = ReplaySession()
     tasks = [
         asyncio.create_task(send_all(websocket, session)),
         asyncio.create_task(receive_all(websocket, session)),
@@ -117,4 +145,5 @@ async def receive_all(websocket: WebSocket, session: Session) -> None:
         except ValidationError as err:
             log.warning("ignoring invalid client message %.200r: %s", raw, err.errors(include_url=False))
             continue
+        log.info("client message: %s", msg.model_dump_json())
         session.handle(msg)

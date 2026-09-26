@@ -3,6 +3,7 @@
 import math
 import shutil
 from datetime import datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 
 import pandas as pd
@@ -57,7 +58,7 @@ def test_frames_cover_the_default_window(frames: list[Frame]) -> None:
     assert len(frames) == 672
     assert [f.i for f in frames] == list(range(672))
     assert frames[0].t == ct("13")
-    assert all(b.t - a.t == TICK for a, b in zip(frames, frames[1:]))
+    assert all(b.t - a.t == TICK for a, b in pairwise(frames))
     assert all(f.t.tzinfo is TZ for f in frames)
     assert not any(math.isnan(f.price) or math.isnan(f.temp_f) for f in frames)
 
