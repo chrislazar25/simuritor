@@ -84,6 +84,13 @@
   - The trigger price barely matters: the storm has 30 called ticks at $500 and $1,000 and 26 at $3,000 (the price is above $3,000 for most of it); the trigger mostly adds or removes pre-storm and Feb 13/19 calls. Pre-charge does nothing when headroom is kept: the fleet fills at ≤ $30 on Feb 10 and never sells, so it's full by Feb 13 either way.
   - Uncovered storm failovers (mean per run, fault rate 0.001 / 0.005): 0 / 0 at 10%, 0.3 / 16 at 20%, 67 / 70 at 30%, 131 / 149 at 40%, 170 / 151 at 60%. Cover takes 8–11 s (p50), 11 s max.
   - Critical homes that ran out: 2, 5 and 5 (seeds 0, 1, 2) in every run, whatever the knobs. All are never-restored homes, out on Feb 15: a 16 h reserve can't last a 4-day outage. See the follow-up below.
+  - Charts (`uv run python -m scripts.plots`, from `results/sweep.csv`):
+
+    ![Promise kept vs contract size, pre-storm and storm](img/safe-contract.png)
+    Pre-storm every contract size keeps 100% of its calls; in the storm, promise kept falls from 95.6% at 10% to 20% at 60%.
+
+    ![Storm promise kept by standard backup hours at 10% and 30%](img/backup-vs-promise.png)
+    Cutting standard backup from 8 h to 4 h lifts storm promise kept at 30% from 67% to 88% and halves the reserve recharge bill, at the cost of 162 more dark home-hours in the storm.
 - Rolling outages (⚠ assumption): ERCOT and the utilities intended short rotating outages, but many circuits stayed out for days (critical-load circuits exempted, the sheer volume of load shed, ice damage). `RollingOutage` models both: 10% of homes never restored for the whole window, the rest cycling 4 h off / 6 h on in 5 groups, each group's cycle shifted by a seeded 0–7 ticks so cuts land on varied quarter hours (46% of the fleet out on average, 1–3 groups at a time). The durations and shares are our assumptions, not sourced; say so in the README.
 - Household drain (⚠ assumption): lowered from ~7 kW to ~2.5 kW at 13 °F so a full average battery lasts ~12 h on backup (homes shed load on backup; reasoning in `FleetConfig`). No single value makes both battery sizes last 10–14 h (25 kWh needs ≤ 2.5 kW, 39.2 kWh needs ≥ 2.8 kW).
 
@@ -106,7 +113,7 @@
 - Critical homes that ran out is never 0 in the sweep, because the never-restored 10% includes 2–5 critical homes and no 16 h reserve lasts ~4 days. So the "no critical home runs out" bar for the safe contract size can't be met under this outage model, whatever the contract. Options: count only rotating homes for the bar, report never-restored ones separately, or let critical homes keep more (e.g. no call share once off grid for long). Decide before the README charts.
 - The pre-storm window has only 5 called ticks per run, so its 100% kept is thin evidence. Say so when comparing windows, or widen the window (Feb 13 has 12 of the rest).
 - `headroom_sold_mwh` counts exports beyond each home's call share (all exports outside calls), so for NaivePolicy it's everything it sells. Reserve recharge cost counts any import that brings a home up to its export floor (contract reserve or 20%), whatever the policy meant by it.
-- `results/sweep.csv` is script output: regenerate it with `scripts/sweep.py`, don't edit it.
+- `results/sweep.csv` is script output, committed (32 KB) so the charts are reproducible without rerunning the sweep: regenerate it with `scripts/sweep.py`, then the charts with `scripts/plots.py`; don't edit either by hand.
 - Scene lighting: `suncalc` vs ~30 lines of our own sun math; add a "hold light level" toggle if the day/night cycle distracts in the Loom recording.
 
 ## Deferred (do if time allows)
