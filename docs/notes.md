@@ -39,7 +39,7 @@
 - `UtilityContract` counts calls per Central-time day, not "one per day on average" (GVEC's wording), and doesn't track Austin Energy's 40 events a year: irrelevant for a 10-day replay, but it matters for a season-long one. The "EEA" trigger option in dispatch-design.md isn't implemented; calls trigger on price only.
 - `headroom_mwh` is energy above the contract reserve, fleet total (per the build brief, docstring updated to match). It includes tier `none` homes' energy below the 20% export floor, which can't be exported (~0.3 MWh through the storm), and during a call it includes what the rest of the call will draw.
 - `delivered_mw` (and so promise kept and the penalty) counts exports only. Homes recharging to their reserve during a call aren't netted against it.
-- HUD: only the chart floats (`FloatingPanel.tsx`); the top bar and counters are still the old solid bar and right column. Move them into glass panels, and add the "collapse panels for a bare map" toggle for the Loom. The expanded state isn't persisted (a reload comes back docked), which is deliberate.
+- HUD: playback (play/pause, speed, reset) lives in the top bar for now; design.md's bottom timeline with a scrubber waits on `seek`. The top bar dropped the "tick N/960" readout to fit at 1440 px; temperature stays. A panel's expanded state isn't persisted (a reload comes back docked), which is deliberate. Saved panel positions from before the HUD pass may overlap the new top bar; clear `simuritor.*` in localStorage to get the defaults.
 - Scene lighting: `suncalc` vs ~30 lines of our own sun math; add a "hold light level" toggle if the day/night cycle distracts in the Loom recording.
 
 ## Deferred (do if time allows)
