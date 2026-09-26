@@ -8,7 +8,7 @@ whatever the policy asked for.
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 import numpy as np
 
@@ -110,11 +110,14 @@ class ContractPolicy:
        one. Outside a call, a home below that level charges up to it whatever the price: keeping
        the promise avoids a penalty at the same price. (Not during a call, where charging would
        only net against the fleet's own delivery; there only the reserve is recovered.)
-    6. Headroom, what's left after 2-5 (during a call, on top of the rest of it): export it if
-       the price is at least `export_at_usd`. Else charge if the price is at most `charge_at_usd`.
+    6. Headroom, what's left after 2-5: `headroom_mode` "keep" never exports it; "sell" exports it
+       (during a call, on top of the rest of it) if the price is at least `export_at_usd`. Either
+       way, charge if the price is at most `charge_at_usd`.
     7. Pre-charge (`precharge`): a cold snap in the forecast and a moderate price: charge to `precharge_soc`.
     """
 
+    headroom_mode: Literal["keep", "sell"] = "keep"
+    """`keep`: headroom stays in the batteries (backup, the next call); `sell`: export it at `export_at_usd`."""
     export_at_usd: float = 1000.0
     charge_at_usd: float = 30.0
     precharge: bool = True
@@ -148,7 +151,8 @@ class ContractPolicy:
             held_kw = (1 + c.buffer_frac) * share
             held_kwh = ready_kwh + held_kw * c.ticks_left * h
         headroom_kw = np.clip(np.minimum(fleet.max_kw - held_kw, (above - held_kwh) / h), 0.0, None)
-        export_kw = share + (headroom_kw if frame.price >= self.export_at_usd else 0.0)
+        sell = self.headroom_mode == "sell" and frame.price >= self.export_at_usd
+        export_kw = share + (headroom_kw if sell else 0.0)
 
         # Back up to the reserve, or outside a call to call-ready, whatever the price.
         target = floor if c is not None and c.call else floor + ready_kwh

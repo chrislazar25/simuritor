@@ -25,7 +25,7 @@
   - Emergency-uncapped triples the called ticks. At 10–30% it barely hurts (still ~80–90% kept); at 60% it breaks (27% kept, penalties 3.4×). That's where the stress case bites.
   - Most of the loss is the homeowner contract, not the utility one: with no contract at all the fleet still ends at −$204k, from recovering reserves at ~$9,000/MWh as the forecast gets colder. The contract's own cost at 10% is ~$7k.
   - Dark home-hours now fall slightly as the contract grows (3,284 → 3,160): call-ready recharge keeps more energy in batteries that backup then uses.
-  - (That table was run before device faults, the outage offsets and the 2% kept tolerance; the one below supersedes it.)
+  - (That table was run before device faults, the outage offsets and the 2% kept tolerance; the one below supersedes it. Both were run selling headroom, the old behaviour: the default now keeps it, and the sweep below supersedes both.)
 - Failover, seed 0, Feb 10–20, default call rules, with the 2% kept tolerance, rolling cuts on varied quarter hours, and greedy cover (`uv run python -m scripts.run_replay --contract-size F --fault-rate R`). Failovers are warned or silent: rolling cuts that land mid-call make both (half the homes warn, `outage_notice_frac`), and device faults are all silent. "Hard out" is homes with a hard device fault by Feb 20. 47 called ticks in every run.
 
   | Contract | Fault rate /home-h | Kept | Penalties | Warned | Silent | Uncovered | Cover p50 / max | Hard out | Dark home-h | Net revenue |
@@ -46,6 +46,44 @@
   - At 30% and above the buffer can't cover a group cut: 86–119 uncovered at 30%, 133–230 at 60%. At 60% during the outage each on-grid home's share is already at max kW, so there's no spare power at all; the few 60% failovers that were covered (at 0.005 and 0.02) all happened outside the outage (Feb 11–14, Feb 19).
   - Greedy cover takes 1 home per failover (median) at 10%, 2 at 30% (at most 10).
   - Hard faults pile up over the 10 days: 21 homes (4%) by Feb 20 at 0.001, 111 (22%) at 0.005, 324 (65%) at 0.02. Those homes can't export, so they keep their energy for backup: dark home-hours fall slightly as the fault rate rises.
+- Insight sweep (`uv run python -m scripts.sweep` → `results/sweep.csv`, 72 runs, ~30 s), headroom kept (the new default). Windows: pre-storm Feb 10 00:00 – Feb 13 00:00 (5 called ticks), storm Feb 14 00:00 – Feb 19 00:00 (30 called ticks); 47 in the whole replay. Promise kept, % (mean over seeds 0–2):
+
+  | Contract | 0.001: pre-storm | storm | all | 0.005: pre-storm | storm | all |
+  |---|---|---|---|---|---|---|
+  | 10% | 100 | 95.6 | 97.2 | 100 | 94.4 | 96.5 |
+  | 20% | 100 | 88.9 | 92.9 | 100 | 84.4 | 90.1 |
+  | 30% | 100 | 66.7 | 78.7 | 100 | 53.3 | 70.2 |
+  | 40% | 100 | 40.0 | 61.7 | 100 | 34.4 | 58.2 |
+  | 60% | 100 | 20.0 | 45.4 | 100 | 18.9 | 41.8 |
+
+  One knob at a time, fault rate 0.001, mean over seeds ($ and home-h are replay totals except storm dark home-h):
+
+  | Contract | Variant | Called | Kept pre / storm / all | Penalties | Storm dark home-h | Headroom MWh avg | Reserve recharge | Net revenue |
+  |---|---|---|---|---|---|---|---|---|
+  | 10% | default ($1,000, 8 h, pre-charge on, keep) | 47 | 100 / 95.6 / 97.2 | $864 | 3,215 | 5.1 | $119,711 | −$223,413 |
+  | 10% | trigger $500 | 54 | 100 / 95.6 / 97.5 | $865 | 3,215 | 5.1 | $119,750 | −$222,912 |
+  | 10% | trigger $3,000 | 39 | 100 / 94.9 / 96.6 | $821 | 3,180 | 5.4 | $118,044 | −$211,979 |
+  | 10% | standard backup 4 h | 47 | 100 / 95.6 / 97.2 | $1,078 | 3,227 | 6.9 | $93,646 | −$197,666 |
+  | 10% | standard backup 12 h | 47 | 100 / 87.8 / 92.2 | $2,093 | 3,160 | 3.5 | $171,273 | −$242,839 |
+  | 10% | pre-charge off | 47 | 100 / 95.6 / 97.2 | $872 | 3,218 | 5.1 | $119,807 | −$224,154 |
+  | 10% | skip before storm | 23 | 100 / 100 / 100 | $8 | 3,187 | 5.3 | $118,679 | −$222,473 |
+  | 10% | sell headroom | 47 | 100 / 84.4 / 90.1 | $4,104 | 3,260 | 3.7 | $151,865 | −$209,432 |
+  | 30% | default | 47 | 100 / 66.7 / 78.7 | $17,374 | 3,188 | 5.9 | $78,132 | −$249,904 |
+  | 30% | trigger $500 | 54 | 100 / 66.7 / 81.5 | $17,374 | 3,188 | 5.8 | $78,134 | −$247,408 |
+  | 30% | trigger $3,000 | 39 | 100 / 61.5 / 74.4 | $17,374 | 3,188 | 6.0 | $78,112 | −$237,633 |
+  | 30% | standard backup 4 h | 47 | 100 / 87.8 / 92.2 | $6,333 | 3,350 | 7.8 | $38,523 | −$227,807 |
+  | 30% | standard backup 12 h | 47 | 100 / 30.0 / 53.2 | $47,007 | 3,132 | 3.9 | $164,844 | −$288,656 |
+  | 30% | pre-charge off | 47 | 100 / 66.7 / 78.7 | $17,374 | 3,189 | 5.6 | $78,168 | −$251,543 |
+  | 30% | skip before storm | 23 | 100 / 77.8 / 88.4 | $3,769 | 3,188 | 6.0 | $76,442 | −$250,219 |
+  | 30% | sell headroom | 47 | 100 / 64.4 / 77.3 | $18,675 | 3,188 | 5.3 | $84,168 | −$228,182 |
+
+  - Pre-storm, every size keeps 100%, but on only 5 called ticks. In the storm no size reaches the 99% bar by default: 10% comes closest (95.6%), and only 10% with `skip_before_storm` keeps everything (it calls 12 storm ticks instead of 30). The safe size drops from ≥ 60% before the storm to below 10% in it.
+  - Keeping headroom is what lifts 10% from 84% to 96% kept in the storm (penalties $4.1k → $0.9k): sold headroom (37 MWh at 10%) is energy the Feb 15–16 calls then lack. It costs ~$14k of net revenue at 10% and ~$22k at 30%. At 30% it barely changes kept (64 → 67%): there the limit is spare power to cover group cuts (67 uncovered storm failovers), not energy.
+  - The homeowner contract is the biggest lever: standard backup 4 h instead of 8 h lifts 30% to 88% kept in the storm and saves ~$22k, for 162 more dark home-hours in the storm; 12 h drops it to 30%. It sets how much energy the reserve locks up exactly when the calls come.
+  - Reserve recharge (buying back up to the export floor as the forecast gets colder) is the largest cost: $78–126k of the loss. It falls from 10% to 30% (likely because the bigger call-ready energy above the reserve absorbs the colder forecast's higher reserve) and rises with the fault rate.
+  - The trigger price barely matters: the storm has 30 called ticks at $500 and $1,000 and 26 at $3,000 (the price is above $3,000 for most of it); the trigger mostly adds or removes pre-storm and Feb 13/19 calls. Pre-charge does nothing when headroom is kept: the fleet fills at ≤ $30 on Feb 10 and never sells, so it's full by Feb 13 either way.
+  - Uncovered storm failovers (mean per run, fault rate 0.001 / 0.005): 0 / 0 at 10%, 0.3 / 16 at 20%, 67 / 70 at 30%, 131 / 149 at 40%, 170 / 151 at 60%. Cover takes 8–11 s (p50), 11 s max.
+  - Critical homes that ran out: 2, 5 and 5 (seeds 0, 1, 2) in every run, whatever the knobs. All are never-restored homes, out on Feb 15: a 16 h reserve can't last a 4-day outage. See the follow-up below.
 - Rolling outages (⚠ assumption): ERCOT and the utilities intended short rotating outages, but many circuits stayed out for days (critical-load circuits exempted, the sheer volume of load shed, ice damage). `RollingOutage` models both: 10% of homes never restored for the whole window, the rest cycling 4 h off / 6 h on in 5 groups, each group's cycle shifted by a seeded 0–7 ticks so cuts land on varied quarter hours (46% of the fleet out on average, 1–3 groups at a time). The durations and shares are our assumptions, not sourced; say so in the README.
 - Household drain (⚠ assumption): lowered from ~7 kW to ~2.5 kW at 13 °F so a full average battery lasts ~12 h on backup (homes shed load on backup; reasoning in `FleetConfig`). No single value makes both battery sizes last 10–14 h (25 kWh needs ≤ 2.5 kW, 39.2 kWh needs ≥ 2.8 kW).
 
@@ -61,10 +99,14 @@
 - The sim asks the grid faults about the next tick, to warn homes ahead of an outage. A `Fault` must be a function of the time alone (both current faults are).
 - Forecast: `forecast_min_f` (`backend/sim.py`) is perfect foresight (the actual temperatures). The forecast error model replaces that one function.
 - ContractPolicy plans the next call's share pro rata to room above the reserve among on-grid homes, so shares move as homes lose or regain grid. Call-ready recharge is skipped during a call (only the reserve is recovered), because `delivered_mw` counts exports only and charging would otherwise inflate promise kept.
-- `UtilityContract` counts calls per Central-time day, not "one per day on average" (GVEC's wording), and doesn't track Austin Energy's 40 events a year: irrelevant for a 10-day replay, but it matters for a season-long one. The "EEA" trigger option in dispatch-design.md isn't implemented; calls trigger on price only.
+- `UtilityContract` counts calls per Central-time day, not "one per day on average" (GVEC's wording), and doesn't track Austin Energy's 40 events a year: irrelevant for a 10-day replay, but it matters for a season-long one. Calls trigger on price only. The grid-emergency trigger (ERCOT ERS deploys on reserves < 3,000 MW, not price) isn't built.
 - `headroom_mwh` is energy above the contract reserve, fleet total (per the build brief, docstring updated to match). It includes tier `none` homes' energy below the 20% export floor, which can't be exported (~0.3 MWh through the storm), and during a call it includes what the rest of the call will draw.
 - `delivered_mw` (and so promise kept and the penalty) counts exports only. Homes recharging to their reserve during a call aren't netted against it.
 - HUD: playback (play/pause, speed, reset) lives in the top bar for now; design.md's bottom timeline with a scrubber waits on `seek`. The top bar dropped the "tick N/960" readout to fit at 1440 px; temperature stays. A panel's expanded state isn't persisted (a reload comes back docked), which is deliberate. Saved panel positions from before the HUD pass may overlap the new top bar; clear `simuritor.*` in localStorage to get the defaults.
+- Critical homes that ran out is never 0 in the sweep, because the never-restored 10% includes 2–5 critical homes and no 16 h reserve lasts ~4 days. So the "no critical home runs out" bar for the safe contract size can't be met under this outage model, whatever the contract. Options: count only rotating homes for the bar, report never-restored ones separately, or let critical homes keep more (e.g. no call share once off grid for long). Decide before the README charts.
+- The pre-storm window has only 5 called ticks per run, so its 100% kept is thin evidence. Say so when comparing windows, or widen the window (Feb 13 has 12 of the rest).
+- `headroom_sold_mwh` counts exports beyond each home's call share (all exports outside calls), so for NaivePolicy it's everything it sells. Reserve recharge cost counts any import that brings a home up to its export floor (contract reserve or 20%), whatever the policy meant by it.
+- `results/sweep.csv` is script output: regenerate it with `scripts/sweep.py`, don't edit it.
 - Scene lighting: `suncalc` vs ~30 lines of our own sun math; add a "hold light level" toggle if the day/night cycle distracts in the Loom recording.
 
 ## Deferred (do if time allows)

@@ -207,6 +207,20 @@ def test_penalty_and_promise_kept() -> None:
     assert rs[-1].revenue_usd == pytest.approx(energy + capacity - rs[-1].penalty_usd)
 
 
+def test_headroom_sold_is_export_beyond_the_call_share() -> None:
+    """3 kWh exported each. Home 0 has a 4 kW call share, so 2 kWh of it is headroom; home 1 has
+    no share, so all 3 kWh is."""
+    r = tiny_sim(soc=[0.90, 0.90], actions=["discharge", "discharge"], call_kw=[4.0, 0.0]).step()
+    assert r.headroom_sold_mwh * 1000 == pytest.approx(2.0 + 3.0)
+
+
+def test_reserve_recharge_cost_is_charging_up_to_the_export_floor() -> None:
+    """Tier `none` (no contract reserve): the 20% floor is 5 kWh. Home 0 charges 3 kWh from 2.5 kWh,
+    2.5 of it up to the floor; home 1 is above it already. 2.5 kWh at $9,000/MWh."""
+    r = tiny_sim(soc=[0.10, 0.50], actions=["charge", "charge"], price=9000.0, tiers=["none", "none"]).step()
+    assert r.reserve_recharge_usd == pytest.approx(2.5 * 9)
+
+
 def test_a_known_device_fault_cant_discharge() -> None:
     sim = tiny_sim(soc=[0.90, 0.90], actions=["discharge", "charge"], kw=[6.0, 6.0], price=20.0)
     sim.devices = ScriptedDevices(fails_at_s=[[np.nan, np.nan]], out=[[True, True]])
@@ -419,12 +433,13 @@ def test_fleet_stats_agree_with_homes(replay: list[TickResult]) -> None:
 def test_precharge_fills_the_fleet_before_the_storm() -> None:
     """Feb 10-12 has a sub-32 °F forecast and prices ≤ $200 to charge at; from Feb 13 it's ≥ $700.
 
-    No utility contract, so call-ready recharge doesn't fill the fleet too.
+    No utility contract, so call-ready recharge doesn't fill the fleet too, and selling headroom:
+    one that keeps it is full by Feb 13 either way (it fills at ≤ $30 on Feb 10 and never sells).
     """
     at_13 = []
     for precharge in (True, False):
         sim = uri_replay(seed=0, contract_size=None)
-        sim.policy = ContractPolicy(precharge=precharge)
+        sim.policy = ContractPolicy(precharge=precharge, headroom_mode="sell")
         at_13.append(next(r for r in run(sim) if r.frame.t == ct(13)).soc.mean())
     assert at_13[0] > 0.8 and at_13[1] < 0.6
 
@@ -500,6 +515,13 @@ def test_without_device_faults_every_failover_is_a_home_losing_the_grid_next_tic
     replay = run(uri_replay(seed=0, fault_rate=0.0))
     events = [(r, n, f) for r, n in zip(replay, replay[1:]) for f in r.failovers]
     assert events and all(r.grid[f.home] and not n.grid[f.home] for r, n, f in events)
+
+
+def test_keep_sells_no_headroom_and_sell_sells_it_at_the_export_price(replay: list[TickResult]) -> None:
+    assert sum(r.headroom_sold_mwh for r in replay) == 0
+    sell = run(uri_replay(seed=0, policy_options={"headroom_mode": "sell"}))
+    assert sum(r.headroom_sold_mwh for r in sell) > 1
+    assert all(r.frame.price >= ContractPolicy().export_at_usd for r in sell if r.headroom_sold_mwh > 0)
 
 
 def test_contract_policy_leaves_fewer_homes_dark_than_naive(replay: list[TickResult]) -> None:

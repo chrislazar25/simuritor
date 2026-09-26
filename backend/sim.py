@@ -167,6 +167,10 @@ class TickResult:
     """Grid down, tier `none`: no backup, whatever the battery holds."""
     headroom_mwh: float
     """Fleet energy above each home's contract reserve, end of tick."""
+    headroom_sold_mwh: float
+    """Exported this tick beyond the homes' call shares and failover cover (all of it outside calls)."""
+    reserve_recharge_usd: float
+    """Cost this tick of charging homes back up to their export floor (contract reserve or reserve floor)."""
     revenue_tick_usd: float
     """Energy (exports - imports at the price) + capacity payment - shortfall penalty."""
     revenue_usd: float
@@ -292,12 +296,15 @@ class Sim:
             config=self.failover,
         )
         exported = np.minimum(timeline.exported_kwh, exportable)
+        own_kwh = (export_kw - share_kw) * drops.at_s / 3600
+        headroom_sold = np.minimum(own_kwh, exported)
         action = np.where(timeline.cover_kwh > 0, "discharge", action)
         imported = np.where(action == "charge", np.minimum(np.clip(cap - energy, 0.0, max_kwh), target_kwh), 0.0)
         # Backup may go below the reserve floor, down to empty: that's what the reserve is for.
         house_kwh = fleet.drain_kw(frame.temp_f) * HOURS_PER_TICK
         backed_up = np.where(action == "backup", np.minimum(house_kwh, np.minimum(energy, max_kwh)), 0.0)
         moved = exported + imported + backed_up
+        to_floor = np.minimum(imported, np.maximum(export_floor - energy, 0.0))
         # An action that moved no energy (e.g. a dark home) is reported as hold.
         action = read_only(np.where(moved > 0, action, "hold"))
 
@@ -346,6 +353,8 @@ class Sim:
             homes_dark=int((off & ~no_backup & (soc == 0)).sum()),
             homes_dark_by_contract=int((off & no_backup).sum()),
             headroom_mwh=float(np.maximum(soc * cap - reserve, 0.0).sum() / 1000),
+            headroom_sold_mwh=float(headroom_sold.sum() / 1000),
+            reserve_recharge_usd=float(to_floor.sum() / 1000 * frame.price),
             revenue_tick_usd=revenue_tick,
             revenue_usd=self.revenue_usd,
             penalty_usd=self.penalty_usd,
@@ -374,9 +383,11 @@ def uri_replay(
     policy: str = "contract",
     contract_size: float | None = UtilityContract.size_frac,
     fault_rate: float = SilentDeviceFaults.rate_per_home_hour,
+    policy_options: dict[str, Any] | None = None,
     **contract_options: Any,
 ) -> Sim:
-    """Tonight's wiring: Uri frames, a seeded fleet, a policy from `POLICIES`, rolling outages,
+    """Tonight's wiring: Uri frames, a seeded fleet, a policy from `POLICIES` (with any
+    `policy_options`, e.g. `headroom_mode="sell"`), rolling outages,
     silent device faults at `fault_rate` per home-hour, and a utility contract of `contract_size`
     x nameplate (None: no contract, `promised_mw` null) with any other `UtilityContract` options
     (e.g. `emergency_uncapped=True`).
@@ -392,7 +403,7 @@ def uri_replay(
     return Sim(
         frames=UriParquetSource().frames() if frames is None else frames,
         fleet=fleet,
-        policy=POLICIES[policy](),
+        policy=POLICIES[policy](**(policy_options or {})),
         faults=[RollingOutage(len(fleet), fault_rng)],
         commitment=None
         if contract_size is None

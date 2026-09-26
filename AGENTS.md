@@ -10,6 +10,7 @@ uv run python -m scripts.gen_types          # regenerate schema JSON + frontend/
 uv run python -m scripts.gen_types --check  # fail if generated files are stale
 uv run scripts/fetch_prices.py              # rebuild data/ercot_rtm_spp_uri_2021-02.parquet from ERCOT
 uv run python -m scripts.run_replay          # full Uri replay headless, daily summary
+uv run python -m scripts.sweep               # insight sweep -> results/sweep.csv, prints the pivot
 uv run uvicorn backend.app:app --reload --port 8000   # backend (health + /ws)
 cd frontend && npm install && npm run dev             # frontend on :5173, proxies /ws to :8000
 cd frontend && npm run build && npm run lint          # type-check + build, lint

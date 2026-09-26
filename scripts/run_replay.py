@@ -2,7 +2,7 @@
 
 Usage: uv run python -m scripts.run_replay [--seed N] [--homes N] [--policy contract|naive]
        [--contract-size FRAC | --no-contract] [--emergency-uncapped] [--skip-before-storm]
-       [--fault-rate RATE]
+       [--fault-rate RATE] [--headroom-mode keep|sell]
 """
 
 import argparse
@@ -13,7 +13,7 @@ import pandas as pd
 
 from backend.commitment import UtilityContract
 from backend.faults import SilentDeviceFaults
-from backend.policy import POLICIES
+from backend.policy import POLICIES, ContractPolicy
 from backend.sim import HOURS_PER_TICK, FleetConfig, uri_replay
 
 
@@ -38,6 +38,12 @@ def main() -> None:
         default=SilentDeviceFaults.rate_per_home_hour,
         help="silent device faults per home-hour (0: none)",
     )
+    parser.add_argument(
+        "--headroom-mode",
+        choices=("keep", "sell"),
+        default=ContractPolicy().headroom_mode,
+        help="contract policy: keep headroom in the batteries, or sell it at the export price",
+    )
     args = parser.parse_args()
 
     contract_size = None if args.no_contract else args.contract_size
@@ -50,6 +56,7 @@ def main() -> None:
         policy=args.policy,
         contract_size=contract_size,
         fault_rate=args.fault_rate,
+        policy_options={"headroom_mode": args.headroom_mode} if args.policy == "contract" else None,
         **options,
     )
     started = time.perf_counter()
@@ -71,6 +78,7 @@ def main() -> None:
                 "kept": r.kept,
                 "delivered_mw": r.delivered_mw,
                 "headroom_mwh": r.headroom_mwh,
+                "headroom_sold_mwh": r.headroom_sold_mwh,
                 "penalty_usd": r.penalty_usd - prev_penalty,
                 "failovers": len(r.failovers),
                 "revenue_usd": r.revenue_usd,
@@ -99,6 +107,8 @@ def main() -> None:
         revenue_usd=("revenue_usd", "last"),
     )
     contract = "no contract" if contract_size is None else f"contract {contract_size:.0%} of nameplate"
+    if args.policy == "contract":
+        contract += f", {args.headroom_mode} headroom"
     contract += "".join(f", {name.replace('_', ' ')}" for name, on in options.items() if on)
     print(
         f"Uri replay: {len(df)} ticks, {args.homes} homes, seed {args.seed}, "
@@ -110,12 +120,14 @@ def main() -> None:
     if contract_size is not None:
         kept = "n/a" if r.promise_kept is None else f"{r.promise_kept:.1%}"
         print(f"Called ticks: {df['called'].sum()}, promise kept: {kept}, penalties: ${r.penalty_usd:,.0f}")
-        print(f"Headroom (time average): {df['headroom_mwh'].mean():.2f} MWh")
         seconds = "n/a" if r.failover_p50_s is None else f"p50 {r.failover_p50_s:.0f} s, max {r.failover_max_s:.0f} s"
         print(
             f"Failovers: {r.failovers_warned} warned, {r.failovers_silent} silent, "
             f"{r.failovers_uncovered} uncovered; time to cover {seconds}"
         )
+    print(f"Headroom: {df['headroom_mwh'].mean():.2f} MWh time average, {r.headroom_mwh:.2f} MWh at the end")
+    if args.policy == "contract" and args.headroom_mode == "sell":
+        print(f"Headroom sold: {df['headroom_sold_mwh'].sum():.2f} MWh")
     if isinstance(sim.devices, SilentDeviceFaults):
         print(f"Homes out with a hard device fault at the end: {sim.devices.hard.sum()}")
     print(f"Net revenue: ${r.revenue_usd:,.0f}")

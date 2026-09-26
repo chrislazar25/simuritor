@@ -135,7 +135,7 @@ def test_call_share_is_capped_at_max_kw_and_the_rest_moves_on() -> None:
 def test_buffer_is_held_in_power() -> None:
     """Share 5 kW + buffer 1 kW: headroom export may use only 12 - 6 = 6 kW more."""
     fleet = view([0.9], promised_mw=0.005)
-    _, kw = contract(price=1000, fleet=fleet)
+    _, kw = contract(price=1000, fleet=fleet, headroom_mode="sell")
     assert kw == pytest.approx([5.0 + 6.0])
 
 
@@ -147,15 +147,15 @@ def test_buffer_is_held_in_energy_for_this_call_and_the_next() -> None:
     9.6 kWh is held: 0.4 kWh = 1.6 kW of headroom export.
     """
     fleet = view([0.5], reserve_kwh=[10], promised_mw=0.004, ticks_left=1)
-    assert contract(price=1000, fleet=fleet)[1] == pytest.approx([4.0 + 6.4])
+    assert contract(price=1000, fleet=fleet, headroom_mode="sell")[1] == pytest.approx([4.0 + 6.4])
     fleet = view([0.5], reserve_kwh=[10], promised_mw=0.004, ticks_left=2)
-    assert contract(price=1000, fleet=fleet)[1] == pytest.approx([4.0 + 1.6])
+    assert contract(price=1000, fleet=fleet, headroom_mode="sell")[1] == pytest.approx([4.0 + 1.6])
 
 
 def test_outside_a_call_headroom_keeps_the_next_calls_energy() -> None:
     """No call (a cooldown, say), 10 kWh above reserve. A 4 kW contract: the next call needs
     4 x 1.2 x 1.5 h = 7.2 kWh, so 2.8 kWh (11.2 kW) is sellable."""
-    action, kw = contract(price=1000, fleet=view([0.5], reserve_kwh=[10], contract_mw=0.004))
+    action, kw = contract(price=1000, fleet=view([0.5], reserve_kwh=[10], contract_mw=0.004), headroom_mode="sell")
     assert action == ["discharge"] and kw == pytest.approx([11.2])
 
 
@@ -163,7 +163,8 @@ def test_the_next_call_is_planned_pro_rata_to_room_above_the_floor() -> None:
     """Room above reserve 30 and 15 kWh: a 12 kW contract plans next-call shares of 8 and 4 kW,
     kept for 1.5 h with the buffer: 14.4 and 7.2 kWh. Home 0 has 20 kWh above reserve: 5.6 kWh
     sellable, 12 kW max. Home 1 has only 5 kWh above: short of call-ready, it charges."""
-    action, kw = contract(price=1000, fleet=view([0.75, 0.75], reserve_kwh=[10, 25], contract_mw=0.012))
+    fleet = view([0.75, 0.75], reserve_kwh=[10, 25], contract_mw=0.012)
+    action, kw = contract(price=1000, fleet=fleet, headroom_mode="sell")
     assert action == ["discharge", "charge"] and kw == pytest.approx([12.0, (7.2 - 5) / 0.25])
 
 
@@ -194,22 +195,22 @@ def test_no_call_ready_recharge_during_a_call() -> None:
 
 def test_fleet_buffer_is_buffer_frac_of_the_promise() -> None:
     fleet = view([0.5, 0.7, 0.9], promised_mw=0.02)
-    _, kw = contract(price=1000, fleet=fleet)
+    _, kw = contract(price=1000, fleet=fleet, headroom_mode="sell")
     spare = [12.0 - k for k in kw]
     assert sum(spare) == pytest.approx(0.2 * 20.0)
 
 
 def test_headroom_export_never_touches_the_reserve() -> None:
     """No call. Home 0 has 2 kWh above reserve (8 kW this tick); home 1 is at its reserve."""
-    action, kw = contract(price=1000, fleet=view([0.5, 0.5], reserve_kwh=[18, 20]))
+    action, kw = contract(price=1000, fleet=view([0.5, 0.5], reserve_kwh=[18, 20]), headroom_mode="sell")
     assert action == ["discharge", "hold"] and kw == pytest.approx([8.0, 0.0])
-    action, _ = contract(price=999, fleet=view([0.5, 0.5], reserve_kwh=[18, 20]))
+    action, _ = contract(price=999, fleet=view([0.5, 0.5], reserve_kwh=[18, 20]), headroom_mode="sell")
     assert action == ["hold", "hold"]
 
 
 def test_reserve_floor_binds_when_higher_than_the_contract_reserve() -> None:
     fleet = view([0.10])  # 4 kWh, the 5% floor is 2 kWh: 2 kWh above it
-    assert contract(price=1000, fleet=fleet)[1] == pytest.approx([8.0])
+    assert contract(price=1000, fleet=fleet, headroom_mode="sell")[1] == pytest.approx([8.0])
 
 
 def test_recover_charges_back_to_the_reserve_whatever_the_price() -> None:
@@ -245,9 +246,37 @@ def test_precharge_stops_at_95_percent() -> None:
 
 
 def test_a_known_device_fault_gets_no_share_and_exports_nothing() -> None:
-    """Home 0's heartbeats stopped: home 1 takes the whole 8 kW call, plus its 2.4 kW headroom
-    (12 kW - 9.6 kW held for share + buffer), and plans the next call alone."""
-    d = decide(ContractPolicy(), 9000, view([0.75, 0.75], promised_mw=0.008, faulted=[True, False]))
+    """Home 0's heartbeats stopped: home 1 takes the whole 8 kW call, plus (selling headroom) its
+    2.4 kW headroom (12 kW - 9.6 kW held for share + buffer), and plans the next call alone."""
+    d = decide(ContractPolicy(headroom_mode="sell"), 9000, view([0.75, 0.75], promised_mw=0.008, faulted=[True, False]))
     assert d.action.tolist() == ["hold", "discharge"]
     assert d.kw.tolist() == pytest.approx([0.0, 10.4])
     assert d.call_kw is not None and d.call_kw.tolist() == pytest.approx([0.0, 8.0])
+
+
+# --- Headroom mode -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("mode", "kw"),
+    [("keep", 5.0), ("sell", 5.0 + 6.0)],  # the call share; sell adds 12 - (5 + 1 buffer) kW of headroom
+)
+def test_keep_never_exports_headroom_in_a_call(mode: str, kw: float) -> None:
+    d = decide(ContractPolicy(headroom_mode=mode), 9000, view([0.9], promised_mw=0.005))
+    assert d.action.tolist() == ["discharge"] and d.kw.tolist() == pytest.approx([kw])
+    assert d.call_kw.tolist() == pytest.approx([5.0])
+
+
+def test_keep_holds_headroom_outside_a_call_and_sell_exports_it() -> None:
+    """No call, 10 kWh above reserve, a 4 kW contract: 2.8 kWh (11.2 kW) of headroom."""
+    fleet = view([0.5], reserve_kwh=[10], contract_mw=0.004)
+    assert contract(price=9000, fleet=fleet) == (["hold"], pytest.approx([0.0]))
+    assert contract(price=9000, fleet=fleet, headroom_mode="sell") == (["discharge"], pytest.approx([11.2]))
+
+
+def test_keep_still_charges_when_cheap_and_recovers_the_reserve() -> None:
+    """Keep only stops headroom exports: cheap power still fills up, and a home below its
+    reserve still charges back to it whatever the price."""
+    action, kw = contract(price=30, fleet=view([0.5]))
+    assert action == ["charge"] and np.isnan(kw[0])
+    assert contract(price=9000, fleet=view([0.5], reserve_kwh=[21])) == (["charge"], pytest.approx([4.0]))
