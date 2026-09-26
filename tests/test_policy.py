@@ -23,6 +23,7 @@ def view(
     ticks_left: int = 1,
     contract_mw: float | None = None,
     forecast_f: float = 50.0,
+    faulted: list[bool] | None = None,
 ) -> FleetView:
     """40 kWh homes, 12 kW max, a 5% reserve floor so the contract reserve is what binds.
 
@@ -36,6 +37,7 @@ def view(
     return FleetView(
         soc=np.array(soc),
         grid=np.array(grid or [True] * n),
+        faulted=np.array(faulted or [False] * n),
         capacity_kwh=np.full(n, 40.0),
         household=np.full(n, "standard"),
         tier=np.full(n, "standard"),
@@ -239,3 +241,12 @@ def test_precharge_before_a_cold_snap(price: float, forecast_f: float, precharge
 def test_precharge_stops_at_95_percent() -> None:
     _, kw = contract(price=100, fleet=view([0.94], forecast_f=10.0))
     assert kw == pytest.approx([0.4 / 0.25])  # 0.4 kWh to 95%
+
+
+def test_a_known_device_fault_gets_no_share_and_exports_nothing() -> None:
+    """Home 0's heartbeats stopped: home 1 takes the whole 8 kW call, plus its 2.4 kW headroom
+    (12 kW - 9.6 kW held for share + buffer), and plans the next call alone."""
+    d = decide(ContractPolicy(), 9000, view([0.75, 0.75], promised_mw=0.008, faulted=[True, False]))
+    assert d.action.tolist() == ["hold", "discharge"]
+    assert d.kw.tolist() == pytest.approx([0.0, 10.4])
+    assert d.call_kw is not None and d.call_kw.tolist() == pytest.approx([0.0, 8.0])

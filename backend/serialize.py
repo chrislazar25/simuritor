@@ -8,7 +8,7 @@ and MW stay exact so the fleet stats keep adding up from the per-home values.
 import math
 
 from backend.data import TICK
-from backend.schema import FleetStats, HomeInfo, HomeState, InitMessage, TickMessage
+from backend.schema import FailoverEvent, FleetStats, HomeInfo, HomeState, InitMessage, TickMessage
 from backend.sim import Fleet, Sim, TickResult
 
 
@@ -72,11 +72,19 @@ def tick_message(fleet: Fleet, r: TickResult) -> TickMessage:
             revenue_tick_usd=round(r.revenue_tick_usd, 2),
             penalty_usd=round(r.penalty_usd, 2),
             promise_kept=r.promise_kept,
-            failovers_warned=0,  # filled by failover
-            failovers_silent=0,  # filled by failover
-            failovers_uncovered=0,  # filled by failover
-            failover_p50_s=None,  # filled by failover
-            failover_max_s=None,  # filled by failover
+            failovers_warned=r.failovers_warned,
+            failovers_silent=r.failovers_silent,
+            failovers_uncovered=r.failovers_uncovered,
+            failover_p50_s=r.failover_p50_s,
+            failover_max_s=r.failover_max_s,
         ),
-        failovers=[],  # filled by failover
+        failovers=[
+            FailoverEvent(
+                home_id=fleet.ids[f.home],
+                kind="warned" if f.warned else "silent",
+                cover_s=f.cover_s,
+                covered_by=f.covered_by,
+            )
+            for f in r.failovers
+        ],
     )

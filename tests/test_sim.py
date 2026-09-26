@@ -8,7 +8,8 @@ import pytest
 
 from backend.commitment import UtilityContract
 from backend.data import TICK, TZ, Frame
-from backend.faults import OUTAGE_END, OUTAGE_START
+from backend.failover import FailoverConfig
+from backend.faults import OUTAGE_END, OUTAGE_START, DeviceTick
 from backend.policy import ContractPolicy, Decisions, FleetView
 from backend.sim import Fleet, FleetConfig, Sim, TickResult, forecast_min_f, read_only, uri_replay
 
@@ -25,15 +26,19 @@ def ct(day: int, hour: int = 0) -> datetime:
 
 @dataclass
 class Scripted:
-    """A policy that always proposes the same actions (and kW targets, if given)."""
+    """A policy that always proposes the same actions (and kW targets and call shares, if given)."""
 
     actions: list[str]
     kw: list[float] | None = None
+    call_kw: list[float] | None = None
 
     def decide(self, frame: Frame, fleet: FleetView) -> Decisions:
         n = len(self.actions)
         kw = None if self.kw is None else np.array(self.kw)
-        return Decisions(action=np.array(self.actions), src=np.full(n, "rule"), conf=np.full(n, np.nan), kw=kw)
+        call_kw = None if self.call_kw is None else np.array(self.call_kw)
+        return Decisions(
+            action=np.array(self.actions), src=np.full(n, "rule"), conf=np.full(n, np.nan), kw=kw, call_kw=call_kw
+        )
 
 
 @dataclass
@@ -46,6 +51,33 @@ class GridDown:
         return np.array(self.down)
 
 
+@dataclass
+class DownFrom:
+    """A fault that cuts the given homes from tick `k` of `tiny_sim` on."""
+
+    down: list[bool]
+    k: int
+
+    def grid_down(self, t: datetime) -> np.ndarray:
+        return np.array(self.down) & ((t - ct(15, 12)) // TICK >= self.k)
+
+
+@dataclass
+class ScriptedDevices:
+    """Device faults on a script: per tick, the second each home faults (NaN: none) and who's known out."""
+
+    fails_at_s: list[list[float]]
+    out: list[list[bool]] | None = None
+    k: int = 0
+
+    def tick(self) -> DeviceTick:
+        n = len(self.fails_at_s[0])
+        out = np.array(self.out[self.k] if self.out else [False] * n)
+        at_s = np.array(self.fails_at_s[self.k])
+        self.k += 1
+        return DeviceTick(out=out, fails_at_s=at_s)
+
+
 def tiny_sim(
     soc: list[float],
     actions: list[str],
@@ -56,6 +88,7 @@ def tiny_sim(
     tiers: list[str] | None = None,
     kw: list[float] | None = None,
     promised_kw: float | None = None,
+    call_kw: list[float] | None = None,
 ) -> Sim:
     """25 kWh `standard` homes with the exact default drain (no noise): `DRAIN_13F` at 13 °F.
 
@@ -69,7 +102,7 @@ def tiny_sim(
     prices = price if isinstance(price, list) else [price] * ticks
     frames = [Frame(i=k, t=ct(15, 12) + k * TICK, price=p, temp_f=temp_f, eea="EEA3") for k, p in enumerate(prices)]
     contract = None if promised_kw is None else UtilityContract(nameplate_mw=promised_kw / 1000, size_frac=1.0)
-    return Sim(frames, fleet, Scripted(actions, kw), [GridDown(down or [False] * n)], contract)
+    return Sim(frames, fleet, Scripted(actions, kw, call_kw), [GridDown(down or [False] * n)], contract)
 
 
 def test_discharge_is_12kw_and_stops_at_the_floor() -> None:
@@ -172,6 +205,73 @@ def test_penalty_and_promise_kept() -> None:
     energy = 3 * 0.5 + 14.5 * 1.0  # $/kWh: tick 0's 3 kWh at $500/MWh, the other 14.5 kWh at $1,000
     capacity = 7 * 2000 * 0.012 / 672  # $2,000/MW-week, 672 ticks a week
     assert rs[-1].revenue_usd == pytest.approx(energy + capacity - rs[-1].penalty_usd)
+
+
+def test_a_known_device_fault_cant_discharge() -> None:
+    sim = tiny_sim(soc=[0.90, 0.90], actions=["discharge", "charge"], kw=[6.0, 6.0], price=20.0)
+    sim.devices = ScriptedDevices(fails_at_s=[[np.nan, np.nan]], out=[[True, True]])
+    r = sim.step()
+    assert r.action.tolist() == ["hold", "charge"] and r.kw.tolist() == pytest.approx([0.0, 6.0])
+
+
+def test_a_new_device_fault_stops_the_export_at_its_second() -> None:
+    sim = tiny_sim(soc=[0.90], actions=["discharge"], kw=[8.0])
+    sim.devices = ScriptedDevices(fails_at_s=[[450.0]])
+    r = sim.step()
+    assert r.kw.tolist() == pytest.approx([4.0]) and r.failovers == []  # no call share: nothing to cover
+
+
+def test_a_silent_fault_in_a_call_is_covered_in_11_s_but_the_gap_misses_the_promise() -> None:
+    """12 kW promised, 6 kW each. Home 0 goes silent at 450 s; home 1 covers from 461 s.
+
+    The 11 s gap (6 kW) is a shortfall: the interval isn't kept, and the penalty is its price.
+    At 65 °F the reserve (2.4 kWh) is below the 20% floor (5 kWh), so home 1 has 16 kWh spare.
+    """
+    sim = tiny_sim(
+        soc=[0.90, 0.90], actions=["discharge"] * 2, kw=[6.0, 6.0], call_kw=[6.0, 6.0], temp_f=65.0, promised_kw=12.0
+    )
+    sim.devices = ScriptedDevices(fails_at_s=[[450.0, np.nan]])
+    r = sim.step()
+    [f] = r.failovers
+    assert (f.home, f.warned, f.cover_s, f.covered_by) == (0, False, 11.0, 1)
+    assert r.kw.tolist() == pytest.approx([3.0, 6.0 + 6.0 * 439 / 900])
+    shortfall_kwh = 6.0 * 11 / 3600
+    assert r.delivered_mw == pytest.approx(0.012 - shortfall_kwh / 0.25 / 1000)
+    assert r.promise_kept == 0 and r.penalty_usd == pytest.approx(shortfall_kwh / 1000 * 1000)
+    assert (r.failovers_warned, r.failovers_silent, r.failovers_uncovered) == (0, 1, 0)
+    assert r.failover_p50_s == r.failover_max_s == 11.0
+
+
+def test_failover_stats_are_cumulative() -> None:
+    """Three call ticks, 4 kW from each of three homes:
+    0. home 0 silent at 300 s: covered in 11 s by the other two;
+    1. home 1 loses the grid next tick and warns (every outage warns here): covered in 5 s;
+    2. homes 0 and 2 go silent; home 1 is off grid: nobody left to cover either.
+    """
+    sim = tiny_sim(
+        soc=[0.90] * 3,
+        actions=["discharge"] * 3,
+        kw=[4.0] * 3,
+        call_kw=[4.0] * 3,
+        temp_f=65.0,
+        promised_kw=12.0,
+        ticks=3,
+    )
+    sim.faults = [DownFrom([False, True, False], k=2)]
+    sim.devices = ScriptedDevices(fails_at_s=[[300.0, np.nan, np.nan], [np.nan] * 3, [100.0, np.nan, 200.0]])
+    sim.failover = FailoverConfig(outage_notice_frac=1.0)
+    rs = [sim.step() for _ in range(3)]
+    assert [[(f.home, f.warned, f.cover_s, f.covered_by) for f in r.failovers] for r in rs] == [
+        [(0, False, 11.0, 2)],
+        [(1, True, 5.0, 2)],
+        [(0, False, None, 0), (2, False, None, 0)],
+    ]
+    assert [(r.failovers_warned, r.failovers_silent, r.failovers_uncovered) for r in rs] == [
+        (0, 1, 0),
+        (1, 1, 0),
+        (1, 3, 2),
+    ]
+    assert [(r.failover_p50_s, r.failover_max_s) for r in rs] == [(11.0, 11.0), (8.0, 11.0), (8.0, 11.0)]
 
 
 def test_no_contract_means_nothing_promised() -> None:
@@ -338,8 +438,9 @@ def test_emergency_uncapped_calls_more_during_the_eea() -> None:
 
 @pytest.fixture(scope="module")
 def naive_replay() -> list[TickResult]:
-    """The naive baseline, on the market alone (no utility contract)."""
-    return run(uri_replay(seed=0, policy="naive", contract_size=None))
+    """The naive baseline, on the market alone (no utility contract, no device faults: a home
+    hard-faulted before Feb 11 can't sell its reserve, so it wouldn't be dark by Feb 15)."""
+    return run(uri_replay(seed=0, policy="naive", contract_size=None, fault_rate=0.0))
 
 
 def test_naive_baseline_sells_the_reserve_then_buys_it_back_at_crisis_prices(
@@ -370,6 +471,24 @@ def test_naive_baseline_sells_the_reserve_then_buys_it_back_at_crisis_prices(
     never_restored = (sim.faults[0].group < 0) & (fleet.tier != "none")  # `none` keeps its energy
     at_noon = next(r for r in replay if r.frame.t == ct(15, 12))
     assert (at_noon.soc[never_restored] == 0).all()  # dark within 10 hours
+
+
+def test_failover_counts_add_up_over_the_replay(replay: list[TickResult]) -> None:
+    """Default chaos (0.005 faults per home-hour): failovers happen only in calls, and every count is
+    the running total of the events. No warned ones: calls run 06:00-07:30 during the outage, and
+    the rotation's cuts fall on even hours, so no home with a share loses the grid mid-call."""
+    events = [f for r in replay for f in r.failovers]
+    assert events and all(r.utility_call for r in replay if r.failovers)
+    last = replay[-1]
+    assert last.failovers_warned == sum(f.warned for f in events) == 0
+    assert last.failovers_silent == sum(not f.warned for f in events)
+    assert last.failovers_uncovered == sum(f.cover_s is None for f in events)
+    assert last.failover_p50_s == last.failover_max_s == 11.0
+
+
+def test_no_device_faults_no_failovers() -> None:
+    last = run(uri_replay(seed=0, fault_rate=0.0))[-1]
+    assert (last.failovers_warned, last.failovers_silent, last.failover_p50_s) == (0, 0, None)
 
 
 def test_contract_policy_leaves_fewer_homes_dark_than_naive(replay: list[TickResult]) -> None:

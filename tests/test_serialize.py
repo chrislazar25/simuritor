@@ -38,6 +38,7 @@ def test_every_tick_keeps_the_contract_consistent(messages: tuple[InitMessage, l
     init, ticks = messages
     ids = [h.id for h in init.homes]
     backup = [h.tier != "none" for h in init.homes]
+    warned = silent = uncovered = 0
     for tick in ticks:
         homes, fleet = tick.homes, tick.fleet
         assert [h.id for h in homes] == ids
@@ -51,7 +52,16 @@ def test_every_tick_keeps_the_contract_consistent(messages: tuple[InitMessage, l
         assert fleet.delivered_mw <= fleet.available_mw + 1e-12
         assert (fleet.promised_mw > 0) == fleet.utility_call
         assert all(h.src == "rule" and h.conf is None for h in homes)
+        # Failover counts are running totals of the events; an event without cover_s wasn't covered.
+        warned += sum(e.kind == "warned" for e in tick.failovers)
+        silent += sum(e.kind == "silent" for e in tick.failovers)
+        uncovered += sum(e.cover_s is None for e in tick.failovers)
+        counts = (fleet.failovers_warned, fleet.failovers_silent, fleet.failovers_uncovered)
+        assert counts == (warned, silent, uncovered)
+        assert all(e.home_id in ids for e in tick.failovers)
+        assert not tick.failovers or fleet.utility_call
     assert max(tick.fleet.homes_exporting for tick in ticks) > 0
     assert max(tick.fleet.homes_dark_by_contract for tick in ticks) > 0
     last = ticks[-1].fleet
     assert last.promise_kept is not None and last.penalty_usd > 0
+    assert silent > 0 and last.failover_p50_s is not None

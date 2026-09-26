@@ -1,8 +1,9 @@
 """Fleet simulator: seeded homes and one 15-minute tick of physics and accounting.
 
-Tick order: faults decide who has grid power -> the contracts say what's owed (each
-home's reserve, the utility's call) -> the policy proposes actions -> physics applies
-them within battery limits -> accounting. The sim keeps its own state (numpy arrays,
+Tick order: faults decide who has grid power and which devices are out -> the contracts
+say what's owed (each home's reserve, the utility's call) -> the policy proposes actions ->
+physics applies them within battery limits, on a timeline in seconds where homes drop out
+and others cover for them (`backend/failover.py`) -> accounting. The sim keeps its own state (numpy arrays,
 one entry per home); `backend/serialize.py` turns it into wire messages.
 """
 
@@ -16,7 +17,8 @@ import numpy as np
 
 from backend.commitment import CommitmentSource, UtilityContract
 from backend.data import HOURS_PER_TICK, Frame, UriParquetSource
-from backend.faults import Fault, RollingOutage
+from backend.failover import Failover, FailoverConfig, drop_outs, run_tick
+from backend.faults import DeviceFaults, Fault, RollingOutage, SilentDeviceFaults
 from backend.policy import POLICIES, FleetView, Policy
 from backend.schema import Household, Tier
 
@@ -172,6 +174,16 @@ class TickResult:
     """Cumulative shortfall penalties."""
     promise_kept: float | None
     """Share of called ticks so far where delivery met the promise; None before the first call."""
+    failovers: list[Failover]
+    """Homes that dropped out of a call this tick, and their cover."""
+    failovers_warned: int
+    """Cumulative, like the rest of the failover counts."""
+    failovers_silent: int
+    failovers_uncovered: int
+    """Failovers whose share wasn't fully covered by the end of their tick."""
+    failover_p50_s: float | None
+    """Median seconds to cover, over fully covered failovers so far; None until one."""
+    failover_max_s: float | None
 
 
 class Sim:
@@ -184,7 +196,11 @@ class Sim:
         policy: Policy,
         faults: Sequence[Fault],
         commitment: CommitmentSource | None = None,
+        devices: DeviceFaults | None = None,
+        rng: np.random.Generator | None = None,
+        failover: FailoverConfig = FailoverConfig(),
     ) -> None:
+        """`rng` draws the failover timeline's random seconds and outage notices."""
         if not frames:
             raise ValueError("no frames to replay")
         self.frames = frames
@@ -192,11 +208,18 @@ class Sim:
         self.policy = policy
         self.faults = faults
         self.commitment = commitment
+        self.devices = devices
+        self.rng = np.random.default_rng(0) if rng is None else rng
+        self.failover = failover
         self.i = 0
         self.revenue_usd = 0.0
         self.penalty_usd = 0.0
         self.called_ticks = 0
         self.kept_ticks = 0
+        self.failovers_warned = 0
+        self.failovers_silent = 0
+        self.failovers_uncovered = 0
+        self.cover_s: list[float] = []
 
     @property
     def done(self) -> bool:
@@ -210,10 +233,13 @@ class Sim:
         energy = fleet.soc * cap
         max_kwh = cfg.max_kw * HOURS_PER_TICK
 
-        grid = np.ones(len(fleet), dtype=bool)
-        for fault in self.faults:
-            grid &= ~fault.grid_down(frame.t)
-        read_only(grid)
+        grid = self.grid_at(self.i)
+        grid_next = self.grid_at(self.i + 1) if self.i + 1 < len(self.frames) else grid
+        if self.devices is None:
+            faulted, fault_at_s = read_only(np.zeros(len(fleet), dtype=bool)), np.full(len(fleet), np.nan)
+        else:
+            device = self.devices.tick()
+            faulted, fault_at_s = device.out, device.fails_at_s
         exportable = np.where(grid, np.clip(energy - cfg.reserve_floor * cap, 0.0, max_kwh), 0.0)
 
         forecast = partial(forecast_min_f, self.frames, self.i)
@@ -222,6 +248,7 @@ class Sim:
         view = FleetView(
             soc=fleet.soc,
             grid=grid,
+            faulted=faulted,
             capacity_kwh=cap,
             household=fleet.household,
             tier=fleet.tier,
@@ -234,16 +261,36 @@ class Sim:
         decisions = self.policy.decide(frame, view)
 
         # Physics has the last word: no grid means backup (except tier `none`: no backup by
-        # contract, the battery keeps its energy), and backup needs the grid down.
+        # contract, the battery keeps its energy), backup needs the grid down, and a known
+        # device fault can't discharge.
         no_backup = fleet.tier == "none"
         action = np.where(
             grid,
             np.where(decisions.action == "backup", "hold", decisions.action),
             np.where(no_backup, "hold", "backup"),
         )
+        action = np.where(faulted & (action == "discharge"), "hold", action)
         target_kwh = np.inf if decisions.kw is None else np.nan_to_num(decisions.kw, nan=np.inf) * HOURS_PER_TICK
         target_kwh = np.maximum(target_kwh, 0.0)
-        exported = np.where(action == "discharge", np.minimum(exportable, target_kwh), 0.0)
+
+        # Exports play out second by second: homes drop out (device faults, the floor, an outage
+        # next tick) and those with a call share are covered by healthy homes' spare.
+        export_kw = np.where(action == "discharge", np.minimum(target_kwh, max_kwh), 0.0) / HOURS_PER_TICK
+        share_kw = np.zeros(len(fleet)) if decisions.call_kw is None else np.minimum(decisions.call_kw, export_kw)
+        floor_room = np.where(grid, np.maximum(energy - cfg.reserve_floor * cap, 0.0), 0.0)
+        drops = drop_outs(export_kw, floor_room, share_kw, grid & ~grid_next, fault_at_s, self.rng, self.failover)
+        export_floor = np.maximum(reserve, cfg.reserve_floor * cap)
+        timeline = run_tick(
+            drops,
+            export_kw,
+            share_kw,
+            spare_kwh=energy - export_floor - export_kw * HOURS_PER_TICK,
+            can_cover=grid & ~faulted & (action != "charge"),
+            max_kw=cfg.max_kw,
+            config=self.failover,
+        )
+        exported = np.minimum(timeline.exported_kwh, exportable)
+        action = np.where(timeline.cover_kwh > 0, "discharge", action)
         imported = np.where(action == "charge", np.minimum(np.clip(cap - energy, 0.0, max_kwh), target_kwh), 0.0)
         # Backup may go below the reserve floor, down to empty: that's what the reserve is for.
         house_kwh = fleet.drain_kw(frame.temp_f) * HOURS_PER_TICK
@@ -268,6 +315,13 @@ class Sim:
                 self.called_ticks += 1
                 self.kept_ticks += shortfall_mw <= SLACK_MW
         self.revenue_usd += revenue_tick
+        for f in timeline.failovers:
+            self.failovers_warned += f.warned
+            self.failovers_silent += not f.warned
+            if f.cover_s is None:
+                self.failovers_uncovered += 1
+            else:
+                self.cover_s.append(f.cover_s)
         self.i += 1
         off = ~grid
         return TickResult(
@@ -292,7 +346,20 @@ class Sim:
             revenue_usd=self.revenue_usd,
             penalty_usd=self.penalty_usd,
             promise_kept=self.kept_ticks / self.called_ticks if self.called_ticks else None,
+            failovers=timeline.failovers,
+            failovers_warned=self.failovers_warned,
+            failovers_silent=self.failovers_silent,
+            failovers_uncovered=self.failovers_uncovered,
+            failover_p50_s=float(np.median(self.cover_s)) if self.cover_s else None,
+            failover_max_s=max(self.cover_s) if self.cover_s else None,
         )
+
+    def grid_at(self, i: int) -> np.ndarray:
+        """True where a home has grid power at tick `i`, by every fault."""
+        grid = np.ones(len(self.fleet), dtype=bool)
+        for fault in self.faults:
+            grid &= ~fault.grid_down(self.frames[i].t)
+        return read_only(grid)
 
 
 def uri_replay(
@@ -301,15 +368,20 @@ def uri_replay(
     frames: list[Frame] | None = None,
     policy: str = "contract",
     contract_size: float | None = UtilityContract.size_frac,
+    fault_rate: float = SilentDeviceFaults.rate_per_home_hour,
     **contract_options: Any,
 ) -> Sim:
     """Tonight's wiring: Uri frames, a seeded fleet, a policy from `POLICIES`, rolling outages,
-    and a utility contract of `contract_size` x nameplate (None: no contract, `promised_mw` null)
-    with any other `UtilityContract` options (e.g. `emergency_uncapped=True`).
+    silent device faults at `fault_rate` per home-hour, and a utility contract of `contract_size`
+    x nameplate (None: no contract, `promised_mw` null) with any other `UtilityContract` options
+    (e.g. `emergency_uncapped=True`).
 
-    One seed, split into independent streams, so the fleet and the outage don't reshuffle each other.
+    One seed, split into independent streams, so the fleet, the outage, the device faults and the
+    failover timeline don't reshuffle each other.
     """
-    fleet_rng, fault_rng = (np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(2))
+    fleet_rng, fault_rng, device_rng, failover_rng = (
+        np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(4)
+    )
     fleet = Fleet(config, fleet_rng)
     nameplate_mw = config.n_homes * config.max_kw / 1000
     return Sim(
@@ -320,4 +392,6 @@ def uri_replay(
         commitment=None
         if contract_size is None
         else UtilityContract(nameplate_mw, size_frac=contract_size, **contract_options),
+        devices=SilentDeviceFaults(len(fleet), device_rng, rate_per_home_hour=fault_rate),
+        rng=failover_rng,
     )

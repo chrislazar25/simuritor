@@ -1,16 +1,18 @@
-"""Faults seam: things that happen to homes or infrastructure during a replay.
+"""Faults / chaos seam: things that happen to homes or infrastructure during a replay.
 
-Tonight a fault can only take homes off the grid. Device, telemetry and model
-failures add their own effects here when they arrive.
+Two kinds: grid faults (`Fault`) take homes off the grid; device faults (`DeviceFaults`)
+stop a home's battery from discharging, without warning. Telemetry and model failures
+add their own effects here when they arrive.
 """
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
 
 import numpy as np
 
-from backend.data import TZ
+from backend.data import HOURS_PER_TICK, TICK, TZ
 
 OUTAGE_START = datetime(2021, 2, 15, 2, 0, tzinfo=TZ)
 """⚠ Matches the ~10 GW ERCOT load drop 1-2am Feb 15 (docs/slice-spec.md)."""
@@ -20,8 +22,62 @@ OUTAGE_END = datetime(2021, 2, 18, 12, 0, tzinfo=TZ)
 
 class Fault(Protocol):
     def grid_down(self, t: datetime) -> np.ndarray:
-        """Bool per home: True where this fault cuts the home's grid power at `t`."""
+        """Bool per home: True where this fault cuts the home's grid power at `t`.
+
+        A function of `t` alone: the sim also asks about the next tick, to warn homes ahead.
+        """
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceTick:
+    """Device faults for one tick. One entry per home."""
+
+    out: np.ndarray
+    """True where a fault from an earlier tick is still out. Known (its heartbeats stopped): the
+    policy sees it, and the home can't discharge this tick."""
+    fails_at_s: np.ndarray
+    """Second of this tick at which a new fault stops the home; NaN where none. Silent: nobody
+    knows until the heartbeats are missed."""
+
+
+class DeviceFaults(Protocol):
+    def tick(self) -> DeviceTick:
+        """The next tick's device faults. Called once per tick, in order."""
+        ...
+
+
+@dataclass
+class SilentDeviceFaults:
+    """Chaos: inverter faults, comms blips and reboots that stop a battery without warning.
+
+    Each home faults at `rate_per_home_hour` (seeded), at a uniform random second of the tick.
+    A fault is transient with probability `transient_frac` (a comms blip or reboot: back next
+    tick), else hard (out for the rest of the replay: no truck rolls in an ice storm). A faulted
+    home can't discharge while out; it still backs up its own house (the local controller runs on).
+    """
+
+    n_homes: int
+    rng: np.random.Generator
+    rate_per_home_hour: float = 0.005
+    """⚠ Our guess; configurable (`run_replay --fault-rate`)."""
+    transient_frac: float = 0.8
+    """⚠ Our guess: the rest are hard faults."""
+    hard: np.ndarray = field(init=False, repr=False)
+    """True where a hard fault has taken the home out for good."""
+
+    def __post_init__(self) -> None:
+        self.hard = np.zeros(self.n_homes, dtype=bool)
+
+    def tick(self) -> DeviceTick:
+        n = self.n_homes
+        out = self.hard.copy()
+        out.setflags(write=False)
+        new = (self.rng.random(n) < -math.expm1(-self.rate_per_home_hour * HOURS_PER_TICK)) & ~out
+        at_s = np.where(new, self.rng.uniform(0.0, TICK.total_seconds(), n), np.nan)
+        self.hard = self.hard | (new & (self.rng.random(n) >= self.transient_frac))
+        at_s.setflags(write=False)
+        return DeviceTick(out=out, fails_at_s=at_s)
 
 
 @dataclass(frozen=True)

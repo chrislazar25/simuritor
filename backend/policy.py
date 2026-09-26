@@ -24,6 +24,8 @@ class FleetView:
     """State of charge, 0-1, at the start of the tick."""
     grid: np.ndarray
     """True where the home has grid power this tick."""
+    faulted: np.ndarray
+    """True where a device fault is known (missed heartbeats): the home can't discharge this tick."""
     capacity_kwh: np.ndarray
     household: np.ndarray
     tier: np.ndarray
@@ -52,6 +54,9 @@ class Decisions:
     """Confidence 0-1; NaN where the tier has none (rules)."""
     kw: np.ndarray | None = None
     """Target power for `charge`/`discharge`, kW; NaN (or no array) = as much as the sim allows."""
+    call_kw: np.ndarray | None = None
+    """Each home's share of the utility call, kW, included in `kw`: what failover covers if the
+    home drops out. None when the policy doesn't split calls (no failover)."""
 
 
 class Policy(Protocol):
@@ -94,7 +99,7 @@ class ContractPolicy:
 
     1. Off grid: backup (the sim enforces it; tier `none` goes dark by contract).
     2. Protect the reserve: never export below the home's floor, its contract reserve or the
-       fleet's reserve floor, whichever is higher.
+       fleet's reserve floor, whichever is higher. A home with a known device fault exports nothing.
     3. Utility call: split the promised MW across on-grid homes pro rata to energy above their
        floor, none above max kW or what it holds this tick (the excess goes to the others).
     4. Buffer: a home with a call share keeps `buffer_frac` x its share spare, in power and in
@@ -127,13 +132,14 @@ class ContractPolicy:
         cap = fleet.capacity_kwh
         energy = fleet.soc * cap
         floor = np.maximum(fleet.reserve_kwh, fleet.reserve_floor * cap)
-        above = np.where(fleet.grid, np.maximum(energy - floor, 0.0), 0.0)
+        can_export = fleet.grid & ~fleet.faulted
+        above = np.where(can_export, np.maximum(energy - floor, 0.0), 0.0)
 
         share = np.zeros(n)
         held_kw = ready_kwh = np.zeros(n)
         c = fleet.commitment
         if c is not None:
-            room = np.where(fleet.grid, np.maximum(cap - floor, 0.0), 0.0)
+            room = np.where(can_export, np.maximum(cap - floor, 0.0), 0.0)
             next_share = pro_rata(c.contract_mw * 1000, weight=room, cap=np.full(n, fleet.max_kw))
             ready_kwh = np.minimum((1 + c.buffer_frac) * next_share * c.max_call_ticks * h, room)
         held_kwh = ready_kwh
@@ -160,7 +166,8 @@ class ContractPolicy:
             ~fleet.grid, "backup", np.where(discharge, "discharge", np.where(charge, "charge", "hold"))
         )
         kw = np.where(discharge, export_kw, np.where(charge, charge_kw, 0.0))
-        return Decisions(action=action, src=np.full(n, "rule"), conf=np.full(n, np.nan), kw=kw)
+        call_kw = np.where(discharge, share, 0.0)
+        return Decisions(action=action, src=np.full(n, "rule"), conf=np.full(n, np.nan), kw=kw, call_kw=call_kw)
 
 
 def pro_rata(total: float, weight: np.ndarray, cap: np.ndarray) -> np.ndarray:

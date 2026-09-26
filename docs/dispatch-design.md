@@ -61,14 +61,15 @@ One home's share of the call drops out, so healthy homes raise their output to c
 
 | | Warned | Silent |
 |---|---|---|
-| Causes | battery close to its reserve; home about to lose grid (rolling outage) | inverter fault, lost telemetry (chaos injection) |
+| Causes | battery about to hit its floor mid-tick; home whose rolling outage starts next tick (half of them warn, `outage_notice_frac`) | device fault (chaos); the other half of the outages |
 | Detection | immediate (the node reports ahead of time) | missed heartbeats: 3 × 2 s (the 2 s interval is ADER's real-time telemetry interval) |
-| Time to cover | ≈ 0 s | detection + reassign latency (default 5 s) |
+| Time to cover | reassign latency: 5 s | detection + reassign: 11 s |
 
-- **Reassign:** spread the lost kW over healthy on-grid homes that have both power headroom (below max kW) and energy headroom (above reserve).
-- **If nobody can take it**, the failure stays **uncovered** until the next tick. It counts as a shortfall, and its time to cover is reported as "not covered".
-- **KPI:** time to cover **< 60 s**. Report **p50 and max**, plus the number uncovered. (p99 ≈ max at our failure counts.)
-- Most failures during Uri come from the replay itself (rolling outages and batteries hitting their reserve). Chaos only adds the silent ones, at a configurable rate.
+- **Who drops out** (`backend/failover.py`, only homes with a call share make a failover): a device fault at a random second of the tick; a home whose export would reach its floor, at the second it gets there; a home losing the grid next tick, at a random second. The earliest reason wins.
+- **Reassign:** spread the lost share over healthy homes (on grid, not faulted, not dropping out this tick), pro rata to their spare: power = max kW − their export − cover already taken; energy = what's above their floor after their own export, for the rest of the tick. Partial cover is allowed.
+- **If nobody can take it**, the rest stays **uncovered** until the end of the tick. The lost kW × uncovered seconds is the shortfall: `delivered_mw` is the tick average, so the penalty and promise kept follow. Its time to cover is reported as "not covered".
+- **KPI:** time to cover **< 60 s**. Report **p50 and max** over covered failovers, plus the number uncovered. (p99 ≈ max at our failure counts.)
+- **Device faults** (`SilentDeviceFaults`, chaos): 0.005 per home-hour. 80% transient (a comms blip or reboot: back next tick); 20% hard (out for the rest of the replay: no truck rolls in an ice storm). A faulted home can't discharge while out; it still backs up its own house. Once a hard fault is known (missed heartbeats), the policy gives the home no share.
 
 ## Weather forecast error
 - The controller plans with a **forecast** = actual temperature + error. The error grows with lead time (default ±2°F at 6 h, ±6°F at 48 h) and has a configurable warm bias.
@@ -135,12 +136,16 @@ Maximise **net revenue** = capacity payment + energy − shortfall penalty − c
 | No calls before a storm | off by default (`skip_before_storm`: forecast < 20°F within 24 h) | Austin Energy: typically no events when a severe storm is forecast. ⚠ The 20°F / 24 h threshold is ours |
 | Battery floor | never below 20% SoC for export; a backup reserve per home | Austin Energy: never discharged below 20%; GVEC × Base: members keep a minimum backup reserve |
 | Call trigger | price threshold | ADER dispatch is limited by bid price vs market price (ERCOT ADER Phase 3 doc) |
-| Heartbeat | 2 s | ADER real-time telemetry interval |
+| Heartbeat | 2 s; a silent home is declared out after 3 missed | ADER real-time telemetry interval. ⚠ The 3 is ours |
+| Reassign latency | 5 s | ⚠ our guess |
+| Silent device faults | 0.005 per home-hour (`--fault-rate`) | ⚠ our guess |
+| Transient vs hard faults | 80% transient (back next tick), 20% hard (out for the rest of the replay) | ⚠ our guess: comms blips and reboots vs failed hardware nobody can reach in an ice storm |
+| Outage notice | half the homes about to lose the grid warn first | ⚠ our guess |
 | Per-home reserve | declared per battery | ADER registration asks for each battery's min operating SoC |
 | Penalty | shortfall × interval price; repeated misses lead to disqualification | ADER settlement + qualification revocation |
 | Max battery power | 12 kW | ⚠ 25 kWh ÷ 1.5 h ≈ 17 kW upper bound; ask Base |
 | Capacity payment | $2,000/MW-week | ⚠ placeholder; Base's contract rates aren't public |
-| Tiers, backup hours, failure rates, forecast error, reassign latency | see above | ⚠ configurable guesses |
+| Tiers, backup hours, forecast error | see above | ⚠ configurable guesses |
 
 Sources:
 - [Austin Energy × Base Power](https://www.publicpower.org/periodical/article/austin-energy-enters-agreement-with-base-power-deploy-40-mw-residential-battery-storage)

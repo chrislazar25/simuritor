@@ -2,6 +2,7 @@
 
 Usage: uv run python -m scripts.run_replay [--seed N] [--homes N] [--policy contract|naive]
        [--contract-size FRAC | --no-contract] [--emergency-uncapped] [--skip-before-storm]
+       [--fault-rate RATE]
 """
 
 import argparse
@@ -11,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from backend.commitment import UtilityContract
+from backend.faults import SilentDeviceFaults
 from backend.policy import POLICIES
 from backend.sim import HOURS_PER_TICK, FleetConfig, uri_replay
 
@@ -30,6 +32,12 @@ def main() -> None:
     parser.add_argument(
         "--skip-before-storm", action="store_true", help="no call while the next 24 h forecast goes below 20°F"
     )
+    parser.add_argument(
+        "--fault-rate",
+        type=float,
+        default=SilentDeviceFaults.rate_per_home_hour,
+        help="silent device faults per home-hour (0: none)",
+    )
     args = parser.parse_args()
 
     contract_size = None if args.no_contract else args.contract_size
@@ -41,6 +49,7 @@ def main() -> None:
         config=FleetConfig(n_homes=args.homes),
         policy=args.policy,
         contract_size=contract_size,
+        fault_rate=args.fault_rate,
         **options,
     )
     started = time.perf_counter()
@@ -63,6 +72,7 @@ def main() -> None:
                 "delivered_mw": r.delivered_mw,
                 "headroom_mwh": r.headroom_mwh,
                 "penalty_usd": r.penalty_usd - prev_penalty,
+                "failovers": len(r.failovers),
                 "revenue_usd": r.revenue_usd,
             }
         )
@@ -85,13 +95,14 @@ def main() -> None:
         delivered_mw_max=("delivered_mw", "max"),
         headroom_mwh=("headroom_mwh", "mean"),
         penalty_usd=("penalty_usd", "sum"),
+        failovers=("failovers", "sum"),
         revenue_usd=("revenue_usd", "last"),
     )
     contract = "no contract" if contract_size is None else f"contract {contract_size:.0%} of nameplate"
     contract += "".join(f", {name.replace('_', ' ')}" for name, on in options.items() if on)
     print(
         f"Uri replay: {len(df)} ticks, {args.homes} homes, seed {args.seed}, "
-        f"{args.policy} policy, {contract}, {elapsed * 1000:.0f} ms\n"
+        f"{args.policy} policy, {contract}, {args.fault_rate:g} device faults/home-h, {elapsed * 1000:.0f} ms\n"
     )
     with pd.option_context("display.width", 200):
         print(daily.round(2).to_string())
@@ -100,10 +111,18 @@ def main() -> None:
         kept = "n/a" if r.promise_kept is None else f"{r.promise_kept:.1%}"
         print(f"Called ticks: {df['called'].sum()}, promise kept: {kept}, penalties: ${r.penalty_usd:,.0f}")
         print(f"Headroom (time average): {df['headroom_mwh'].mean():.2f} MWh")
+        seconds = "n/a" if r.failover_p50_s is None else f"p50 {r.failover_p50_s:.0f} s, max {r.failover_max_s:.0f} s"
+        print(
+            f"Failovers: {r.failovers_warned} warned, {r.failovers_silent} silent, "
+            f"{r.failovers_uncovered} uncovered; time to cover {seconds}"
+        )
+    if isinstance(sim.devices, SilentDeviceFaults):
+        print(f"Homes out with a hard device fault at the end: {sim.devices.hard.sum()}")
     print(f"Net revenue: ${r.revenue_usd:,.0f}")
     print("\nPer day: min/max price ($/MWh), min homes on grid, max homes on battery / dark (ran out), dark")
     print("home-hours, max homes dark by contract, grid cuts (times a home lost the grid), called/kept ticks,")
-    print("max delivered MW, mean headroom MWh, penalties that day ($), cumulative net revenue at end of day ($).")
+    print("max delivered MW, mean headroom MWh, penalties that day ($), failovers that day, cumulative net")
+    print("revenue at end of day ($).")
 
 
 if __name__ == "__main__":

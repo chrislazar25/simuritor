@@ -1,4 +1,4 @@
-"""Faults: rolling outages (the default) and the fixed outage used in tests."""
+"""Faults: rolling outages (the default), the fixed outage used in tests, and silent device faults."""
 
 from datetime import timedelta
 from itertools import groupby
@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from backend.data import TICK
-from backend.faults import OUTAGE_END, OUTAGE_START, FixedOutage, RollingOutage
+from backend.faults import OUTAGE_END, OUTAGE_START, FixedOutage, RollingOutage, SilentDeviceFaults
 
 N = 500
 
@@ -64,3 +64,39 @@ def test_fixed_outage_hits_an_exact_share() -> None:
     fixed = FixedOutage(N, np.random.default_rng(0), share=0.40)
     assert fixed.grid_down(OUTAGE_START).sum() == 200
     assert not fixed.grid_down(OUTAGE_END).any()
+
+
+# --- Silent device faults ------------------------------------------------------
+
+
+def test_device_faults_happen_at_the_rate_at_random_seconds() -> None:
+    """0.02 per home-hour over 10,000 homes and 40 ticks (10 h): ~2,000 faults, 20% of them hard."""
+    faults = SilentDeviceFaults(10_000, np.random.default_rng(0), rate_per_home_hour=0.02)
+    ticks = [faults.tick() for _ in range(40)]
+    starts = np.concatenate([t.fails_at_s[~np.isnan(t.fails_at_s)] for t in ticks])
+    assert len(starts) == pytest.approx(10_000 * 0.02 * 10, rel=0.1)
+    assert starts.min() >= 0 and starts.max() < 900 and np.median(starts) == pytest.approx(450, rel=0.1)
+    assert faults.hard.sum() == pytest.approx(0.2 * len(starts), rel=0.15)
+
+
+def test_a_transient_fault_is_back_next_tick() -> None:
+    faults = SilentDeviceFaults(100, np.random.default_rng(0), rate_per_home_hour=1e6, transient_frac=1.0)
+    for _ in range(3):
+        t = faults.tick()
+        assert not t.out.any() and not np.isnan(t.fails_at_s).any()  # every home, every tick; none stays out
+
+
+def test_a_hard_fault_is_out_for_the_rest_of_the_replay_and_known() -> None:
+    faults = SilentDeviceFaults(100, np.random.default_rng(0), rate_per_home_hour=1e6, transient_frac=0.0)
+    first = faults.tick()
+    assert not first.out.any() and not np.isnan(first.fails_at_s).any()  # silent: not known this tick
+    for _ in range(3):
+        t = faults.tick()
+        assert t.out.all() and np.isnan(t.fails_at_s).all()  # known out; can't fault again
+
+
+def test_device_faults_are_seeded() -> None:
+    a, b = (SilentDeviceFaults(N, np.random.default_rng(7)) for _ in range(2))
+    for _ in range(200):
+        ta, tb = a.tick(), b.tick()
+        assert np.array_equal(ta.fails_at_s, tb.fails_at_s, equal_nan=True) and np.array_equal(ta.out, tb.out)
