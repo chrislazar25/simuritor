@@ -46,7 +46,7 @@ green = on grid, idle/charging · blue = exporting · amber = grid out, running 
 ## Repo layout
 ```
 backend/  app.py (FastAPI + ws, ReplaySession) · sim.py (fleet, tick) · policy.py (Policy interface, NaivePolicy) · faults.py (Fault interface, RollingOutage, FixedOutage) · data.py (loaders, EEA table) · serialize.py (sim → wire)
-frontend/ Vite + React: Map.tsx (MapLibre + Carto) · Charts.tsx (Recharts) · Controls.tsx · useTicks.ts (ws hook)
+frontend/ Vite + React: Map.tsx (MapLibre + OpenFreeMap) · Charts.tsx (Recharts) · Controls.tsx · useTicks.ts (ws hook)
 data/     parquet files (copied from prep repo)
 ```
 

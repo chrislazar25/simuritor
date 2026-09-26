@@ -172,12 +172,9 @@ body {
   border-radius: 50%;
 }
 
-/* Placeholder look until the chart lands. */
-.slot {
-  display: grid;
-  place-items: center;
-  min-height: 160px;
-  color: var(--muted);
+.chart {
+  min-height: 240px;
+  padding: 12px 8px 8px;
 }
 
 /* Narrow screens: panels stack under the map. */

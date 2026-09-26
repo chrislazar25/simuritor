@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useRef, useState } from 'react'
 import { type HomeVisual, homeVisual } from './homeVisual.ts'
+import { cssVar } from './tokens.ts'
 import type { InitMessage, TickMessage } from './types.ts'
 
 const BASEMAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
@@ -13,11 +14,6 @@ const SOURCE = 'homes'
 // MapLibre looks for its worker next to its own module, which isn't where Vite puts it.
 // `?worker&url` has Vite bundle the worker (and the chunk it imports) and hand us its URL.
 setWorkerUrl(workerUrl)
-
-/** State colours come from the CSS tokens, so the map and the rest of the UI share one palette. */
-function cssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-}
 
 /** One point per home with its visual state. Before the first tick every home shows as on grid. */
 function homesGeoJSON(init: InitMessage, tick: TickMessage | null): FeatureCollection {
@@ -45,6 +41,7 @@ export function FleetMap({ init, tick }: { init: InitMessage | null; tick: TickM
     const m = new MapLibreMap({ container: container.current!, style: BASEMAP_STYLE, center: AUSTIN, zoom: 10 })
     map.current = m
     m.on('load', () => {
+      // State colours come from the CSS tokens, so the map and the rest of the UI share one palette.
       const colour = (visual: HomeVisual) => cssVar(`--state-${visual}`)
       m.addSource(SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       m.addLayer({

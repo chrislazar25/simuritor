@@ -16,6 +16,13 @@ export function formatClock(iso: string): string {
   return `${p.weekday} ${p.month} ${p.day} ${p.hour}:${p.minute} CT`
 }
 
+const dayFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' })
+
+/** "Feb 15" */
+export function formatDay(date: Date): string {
+  return dayFormat.format(date)
+}
+
 const usdFormat = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 
 /** "-$191,145" */

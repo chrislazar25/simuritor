@@ -3,6 +3,9 @@ import type { ClientMessage, InitMessage, ServerMessage, TickMessage } from './t
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
+/** The few numbers per tick the chart needs. Keeping whole ticks would hold 672 × 500 homes. */
+export type TickPoint = Pick<TickMessage, 'i' | 't' | 'price'> & Pick<TickMessage['fleet'], 'delivered_mw'>
+
 const RETRY_MIN_MS = 500
 const RETRY_MAX_MS = 5000
 
@@ -15,6 +18,9 @@ function socketUrl(path: string): string {
  * One replay session over a websocket: keeps the latest `init` and `tick`,
  * and reconnects with backoff when the socket closes.
  *
+ * `history` has one point per tick received since the last `init`. It's appended
+ * per message, not per render, so no tick is lost when React batches fast ticks.
+ *
  * `playing` mirrors the server's play state, which it never sends: play/pause
  * set it, and the server pauses itself on every `init` (connect or reset) and
  * after the last tick.
@@ -23,6 +29,7 @@ export function useTicks(path = '/ws') {
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [init, setInit] = useState<InitMessage | null>(null)
   const [tick, setTick] = useState<TickMessage | null>(null)
+  const [history, setHistory] = useState<TickPoint[]>([])
   const [playing, setPlaying] = useState(false)
   const socket = useRef<WebSocket | null>(null)
 
@@ -50,10 +57,12 @@ export function useTicks(path = '/ws') {
             nTicks = msg.n_ticks
             setInit(msg)
             setTick(null)
+            setHistory([])
             setPlaying(false)
             break
           case 'tick':
             setTick(msg)
+            setHistory((h) => [...h, { i: msg.i, t: msg.t, price: msg.price, delivered_mw: msg.fleet.delivered_mw }])
             if (msg.i === nTicks - 1) setPlaying(false)
             break
         }
@@ -86,5 +95,5 @@ export function useTicks(path = '/ws') {
     return true
   }, [])
 
-  return { status, init, tick, playing, send }
+  return { status, init, tick, history, playing, send }
 }
