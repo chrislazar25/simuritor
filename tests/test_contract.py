@@ -53,15 +53,18 @@ def test_tick_is_inside_the_replay_window(init: InitMessage, tick: TickMessage) 
     assert init.start <= tick.t < init.end
 
 
-def test_fleet_stats_match_homes(tick: TickMessage) -> None:
+def test_fleet_stats_match_homes(init: InitMessage, tick: TickMessage) -> None:
     homes, fleet = tick.homes, tick.fleet
+    backup = [h.tier != "none" for h in init.homes]
     assert fleet.homes_on_grid == sum(h.grid for h in homes)
-    assert fleet.homes_on_battery == sum(not h.grid and h.soc > 0 for h in homes)
-    assert fleet.homes_dark == sum(not h.grid and h.soc == 0 for h in homes)
+    assert fleet.homes_on_battery == sum(not h.grid and b and h.soc > 0 for h, b in zip(homes, backup))
+    assert fleet.homes_dark == sum(not h.grid and b and h.soc == 0 for h, b in zip(homes, backup))
+    assert fleet.homes_dark_by_contract == sum(not h.grid and not b for h, b in zip(homes, backup))
     assert fleet.homes_exporting == sum(h.grid and h.action == "discharge" for h in homes)
     delivered_kw = sum(h.kw for h in homes if h.action == "discharge")
     assert fleet.delivered_mw == pytest.approx(delivered_kw / 1000)
     assert fleet.delivered_mw <= fleet.available_mw
+    assert fleet.utility_call == (fleet.promised_mw is not None and fleet.promised_mw > 0)
 
 
 @pytest.mark.parametrize(

@@ -82,7 +82,7 @@ export interface FleetStats {
    */
   available_mw: number;
   /**
-   * MW committed to the utility for this tick; null when no commitment source is configured.
+   * MW committed to the utility for this tick: 0 outside calls; null when no commitment source is configured.
    */
   promised_mw: number | null;
   /**
@@ -114,7 +114,9 @@ export interface FleetStats {
    */
   homes_dark_by_contract: number;
   /**
-   * Uncommitted fleet energy: above each home's reserve, its share of the call and the failover buffer.
+   * Fleet energy above each home's contract reserve at the end of the tick.
+   *
+   * During a call this includes what the rest of the call will draw.
    */
   headroom_mwh: number;
   /**

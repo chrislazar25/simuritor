@@ -82,7 +82,7 @@ class FleetStats(Wire):
     available_mw: Annotated[float, Field(ge=0)]
     """What the fleet could physically export this tick: homes on grid, above reserve floor."""
     promised_mw: Annotated[float, Field(ge=0)] | None
-    """MW committed to the utility for this tick; null when no commitment source is configured."""
+    """MW committed to the utility for this tick: 0 outside calls; null when no commitment source is configured."""
     delivered_mw: Annotated[float, Field(ge=0)]
     """Actual fleet discharge to the grid this tick."""
     utility_call: bool
@@ -98,7 +98,9 @@ class FleetStats(Wire):
     homes_dark_by_contract: Annotated[int, Field(ge=0)]
     """Grid down, tier `none`: the house is unpowered by contract while the battery keeps its energy."""
     headroom_mwh: Annotated[float, Field(ge=0)]
-    """Uncommitted fleet energy: above each home's reserve, its share of the call and the failover buffer."""
+    """Fleet energy above each home's contract reserve at the end of the tick.
+
+    During a call this includes what the rest of the call will draw."""
     revenue_usd: float
     """Cumulative since replay start; charging at negative prices earns money."""
     revenue_tick_usd: float

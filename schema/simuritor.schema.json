@@ -70,7 +70,7 @@
               "type": "null"
             }
           ],
-          "description": "MW committed to the utility for this tick; null when no commitment source is configured."
+          "description": "MW committed to the utility for this tick: 0 outside calls; null when no commitment source is configured."
         },
         "delivered_mw": {
           "description": "Actual fleet discharge to the grid this tick.",
@@ -107,7 +107,7 @@
           "type": "integer"
         },
         "headroom_mwh": {
-          "description": "Uncommitted fleet energy: above each home's reserve, its share of the call and the failover buffer.",
+          "description": "Fleet energy above each home's contract reserve at the end of the tick.\n\nDuring a call this includes what the rest of the call will draw.",
           "minimum": 0,
           "type": "number"
         },

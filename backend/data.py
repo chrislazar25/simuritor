@@ -17,6 +17,7 @@ from backend.schema import EEA
 
 TZ = ZoneInfo("America/Chicago")
 TICK = timedelta(minutes=15)
+HOURS_PER_TICK = TICK / timedelta(hours=1)  # 0.25
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 

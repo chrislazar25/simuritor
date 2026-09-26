@@ -43,11 +43,11 @@ Every battery's energy is split into layers, filled bottom-up:
 
 ## The policy: a fixed priority list, per home, per 15-min tick
 1. **Off grid?** Tiers `standard`/`critical` power the house from the battery. Tier `none` goes dark and keeps its energy.
-2. **Protect the reserve** (tier × forecast temperature).
-3. **Utility call active?** Deliver the contracted MW. Split it across on-grid homes in proportion to their energy above reserve.
-4. **Hold the buffer.** Buffer = nameplate − contract. It's what failover draws on.
-5. **Use headroom** (can run during a call too): export if price ≥ $1,000 and there's energy above reserve + share of call + buffer; charge if price ≤ $30; otherwise hold.
-6. **Cold snap forecast in the next 24 h?** Charge up beforehand, while prices are still low.
+2. **Protect the reserve** (tier × forecast temperature). Exports also stop at the fleet's reserve floor (20% SoC, the battery's minimum operating SoC), so a home's export floor is whichever is higher.
+3. **Utility call active?** Deliver the contracted MW. Split it across on-grid homes in proportion to their energy above reserve, capped at max kW per home; what a capped home can't take goes to the others.
+4. **Hold the buffer.** The buffer is sized at fleet level, **`buffer_frac` × promised MW** (default 20%), and held per battery pro rata to each home's call share: a home with share *s* keeps `buffer_frac` × *s* spare, in **power** (its other exports stay ≤ max kW − *s* − buffer) and in **energy** (it keeps reserve + (*s* + buffer) × the rest of the call). It's what failover draws on.
+5. **Use headroom**, what's left after 2–4 (can run during a call too): export if price ≥ $1,000; charge if price ≤ $30, or back up to the reserve if on grid below it (whatever the price); otherwise hold.
+6. **Cold snap forecast in the next 24 h?** (below 32°F, behind a flag, default on) Charge to 95% while the price is ≤ $200.
 
 The policy stays behind the existing `Policy` interface. `NaivePolicy` remains as the baseline for comparison.
 

@@ -21,7 +21,7 @@ Jev, confidence gate, circuit breaker, chaos injection, policy comparison, day-a
 | Fleet size | 500 tonight, scale to 2,000+ Saturday |
 | Home location | random points inside Austin (bbox ≈ lat 30.15–30.45, lon −97.90 to −97.60), seeded |
 | Battery | 60% 25 kWh (Gen2), 40% 39.2 kWh (Core); reserve floor 20% |
-| Max charge/discharge power | ⚠ 10 kW per home |
+| Max charge/discharge power | ⚠ 12 kW per home (was 10; see docs/dispatch-design.md) |
 | Starting charge | uniform 60–95% |
 | Household mix | 70% standard · 10% medical device · 10% elderly · 10% work-from-home |
 | Household drain | ⚠ kW = 0.3 + 0.042 × max(0, 65 − temp°F) (≈ 2.5 kW at 13°F), fixed ±20% per-home factor; only drawn from the battery on backup. First version was 0.8 + 0.12 × … (≈ 7 kW, whole-home resistance heat), which emptied a battery in 3.5–5.6 h; reasoning in `FleetConfig` |
