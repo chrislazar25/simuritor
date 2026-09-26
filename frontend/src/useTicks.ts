@@ -4,7 +4,7 @@ import type { ClientMessage, InitMessage, ServerMessage, TickMessage } from './t
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
 /** The few numbers per tick the chart needs. Keeping whole ticks would hold 672 × 500 homes. */
-export type TickPoint = Pick<TickMessage, 'i' | 't' | 'price'> & Pick<TickMessage['fleet'], 'delivered_mw'>
+export type TickPoint = Pick<TickMessage, 'i' | 't' | 'price'> & Pick<TickMessage['fleet'], 'available_mw' | 'delivered_mw'>
 
 const RETRY_MIN_MS = 500
 const RETRY_MAX_MS = 5000
@@ -62,7 +62,16 @@ export function useTicks(path = '/ws') {
             break
           case 'tick':
             setTick(msg)
-            setHistory((h) => [...h, { i: msg.i, t: msg.t, price: msg.price, delivered_mw: msg.fleet.delivered_mw }])
+            setHistory((h) => [
+              ...h,
+              {
+                i: msg.i,
+                t: msg.t,
+                price: msg.price,
+                available_mw: msg.fleet.available_mw,
+                delivered_mw: msg.fleet.delivered_mw,
+              },
+            ])
             if (msg.i === nTicks - 1) setPlaying(false)
             break
         }

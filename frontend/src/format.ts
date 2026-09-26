@@ -16,9 +16,9 @@ export function formatClock(iso: string): string {
   return `${p.weekday} ${p.month} ${p.day} ${p.hour}:${p.minute} CT`
 }
 
-const dayFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric' })
+const dayFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'numeric', day: 'numeric' })
 
-/** "Feb 15" */
+/** "2/15": short enough that every day of the week fits on the narrow chart. */
 export function formatDay(date: Date): string {
   return dayFormat.format(date)
 }

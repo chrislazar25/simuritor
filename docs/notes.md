@@ -15,6 +15,7 @@
 - Recording for the deployed site: a tick is ~48 KiB of JSON at 500 homes (SoC/kW/MW sent unrounded so fleet stats add up exactly), so 672 ticks ≈ 32 MB. Round SoC/kW in the recording (and keep counts consistent) or compress/delta-encode it.
 - Frontend visual pass: load the fonts named in `docs/design.md` (Inter Tight, JetBrains Mono); tonight the page falls back to system fonts.
 - Map visual pass: the basemap is the stock OpenFreeMap "liberty" style, hard-coded in `Map.tsx`; the design wants a muted style owned by the theme. The dot colours are read from the CSS tokens once when the map loads, so a theme switch would need to re-apply the circle paint.
+- Chart markers: the $1,000 sell threshold and the Feb 15 02:00 outage start are copied into `frontend/src/Charts.tsx` from `backend/policy.py` and `backend/faults.py`, because the wire doesn't carry them. When policies or outages become swappable, send them in `init` (a schema change) and drop the copies.
 - Scene lighting: `suncalc` vs ~30 lines of our own sun math; add a "hold light level" toggle if the day/night cycle distracts in the Loom recording.
 
 ## Deferred (do if time allows)
