@@ -33,9 +33,21 @@ def test_groups_split_the_fleet(rolling: RollingOutage) -> None:
     assert sizes == {-1: 50, 0: 90, 1: 90, 2: 90, 3: 90, 4: 90}
 
 
-def test_46_percent_out_at_every_tick(down: np.ndarray) -> None:
-    # 10% never restored + 40% of the other 90% (2 of 5 groups).
-    assert (down.sum(axis=1) == 50 + 180).all()
+def test_46_percent_out_on_average_1_to_3_groups_at_a_time(down: np.ndarray) -> None:
+    """10% never restored + 40% of the other 90% (2 of 5 groups) over a cycle; the offsets
+    make it 1 to 3 groups at any moment. The window isn't a whole number of cycles."""
+    out = down.sum(axis=1)
+    assert set(out.tolist()) <= {50 + 90, 50 + 180, 50 + 270}
+    assert out.mean() == pytest.approx(50 + 180, rel=0.05)
+
+
+def test_groups_are_offset_by_whole_ticks_so_cuts_land_on_varied_quarter_hours(
+    rolling: RollingOutage, down: np.ndarray
+) -> None:
+    assert rolling.offset_ticks.min() >= 0 and rolling.offset_ticks.max() <= 7
+    ticks = window_ticks()
+    cut_minutes = {ticks[k].minute for k in range(1, len(ticks)) if (down[k] & ~down[k - 1]).any()}
+    assert len(cut_minutes) > 1
 
 
 def test_never_restored_homes_are_out_the_whole_window(rolling: RollingOutage, down: np.ndarray) -> None:

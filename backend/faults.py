@@ -59,7 +59,7 @@ class SilentDeviceFaults:
 
     n_homes: int
     rng: np.random.Generator
-    rate_per_home_hour: float = 0.005
+    rate_per_home_hour: float = 0.001
     """⚠ Our guess; configurable (`run_replay --fault-rate`)."""
     transient_frac: float = 0.8
     """⚠ Our guess: the rest are hard faults."""
@@ -86,9 +86,10 @@ class RollingOutage:
 
     Homes are split (seeded) into `never_restored_share` of the fleet, out for the whole
     window, and `n_groups` rotation groups for the rest. Each group cycles `off_hours` off,
-    `on_hours` on, with the groups' cycles staggered evenly. With the defaults (4 h off of a
-    10 h cycle, 5 groups 2 h apart) exactly 2 groups, i.e. 40% of rotating homes, are out
-    at any moment; with the never-restored 10% that's 46% of the fleet.
+    `on_hours` on. The groups' cycles are staggered evenly (5 groups: 2 h apart), then each is
+    shifted by a seeded offset of 0 to `max_offset_ticks` whole ticks, so cuts land on varied
+    quarter hours rather than all on the hour. Over a cycle 40% of rotating homes are out (2 of
+    5 groups; 46% of the fleet with the never-restored 10%); at a given moment 1 to 3 groups.
 
     ⚠ Assumption (docs/notes.md): ERCOT intended short rotations, but many circuits stayed
     out for days. The never-restored share is that second case, where reserve policy matters most.
@@ -100,10 +101,14 @@ class RollingOutage:
     on_hours: float = 6.0
     n_groups: int = 5
     never_restored_share: float = 0.10
+    max_offset_ticks: int = 7
+    """⚠ Each group's cycle starts 0 to this many ticks after its even stagger."""
     start: datetime = OUTAGE_START
     end: datetime = OUTAGE_END
     group: np.ndarray = field(init=False)
     """Rotation group per home, 0 to n_groups - 1; -1 for never restored."""
+    offset_ticks: np.ndarray = field(init=False)
+    """Per group: whole ticks its cycle is shifted by."""
 
     def __post_init__(self) -> None:
         order = self.rng.permutation(self.n_homes)
@@ -112,14 +117,19 @@ class RollingOutage:
         group[order[n_never:]] = np.arange(self.n_homes - n_never) % self.n_groups
         group.setflags(write=False)
         object.__setattr__(self, "group", group)
+        # Drawn after the groups, so adding offsets left the group split unchanged.
+        offset = self.rng.integers(0, self.max_offset_ticks + 1, self.n_groups)
+        offset.setflags(write=False)
+        object.__setattr__(self, "offset_ticks", offset)
 
     def grid_down(self, t: datetime) -> np.ndarray:
         if not self.start <= t < self.end:
             return np.zeros(self.n_homes, dtype=bool)
         cycle = self.off_hours + self.on_hours
         elapsed = (t - self.start) / timedelta(hours=1)
-        # Each group's cycle starts `cycle / n_groups` hours after the previous group's.
-        phase = (elapsed - self.group * cycle / self.n_groups) % cycle
+        # Each group's cycle starts `cycle / n_groups` hours after the previous group's, plus its offset.
+        offset = np.where(self.group >= 0, self.offset_ticks[self.group], 0) * HOURS_PER_TICK
+        phase = (elapsed - self.group * cycle / self.n_groups - offset) % cycle
         return (self.group < 0) | (phase < self.off_hours)
 
 

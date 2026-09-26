@@ -172,8 +172,10 @@ class TickResult:
     revenue_usd: float
     penalty_usd: float
     """Cumulative shortfall penalties."""
+    kept: bool
+    """Called, and delivery met the promise within the contract's `kept_tolerance`."""
     promise_kept: float | None
-    """Share of called ticks so far where delivery met the promise; None before the first call."""
+    """Share of called ticks so far that were kept; None before the first call."""
     failovers: list[Failover]
     """Homes that dropped out of a call this tick, and their cover."""
     failovers_warned: int
@@ -304,6 +306,7 @@ class Sim:
 
         delivered_mw = float(exported.sum() / HOURS_PER_TICK / 1000)
         revenue_tick = float((exported.sum() - imported.sum()) / 1000 * frame.price)
+        kept = False
         if owed is not None:
             revenue_tick += owed.capacity_usd
             shortfall_mw = owed.promised_mw - delivered_mw
@@ -312,8 +315,9 @@ class Sim:
                 revenue_tick -= penalty
                 self.penalty_usd += penalty
             if owed.call:
+                kept = delivered_mw >= (1 - owed.kept_tolerance) * owed.promised_mw - SLACK_MW
                 self.called_ticks += 1
-                self.kept_ticks += shortfall_mw <= SLACK_MW
+                self.kept_ticks += kept
         self.revenue_usd += revenue_tick
         for f in timeline.failovers:
             self.failovers_warned += f.warned
@@ -345,6 +349,7 @@ class Sim:
             revenue_tick_usd=revenue_tick,
             revenue_usd=self.revenue_usd,
             penalty_usd=self.penalty_usd,
+            kept=kept,
             promise_kept=self.kept_ticks / self.called_ticks if self.called_ticks else None,
             failovers=timeline.failovers,
             failovers_warned=self.failovers_warned,

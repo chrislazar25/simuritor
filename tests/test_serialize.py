@@ -64,4 +64,4 @@ def test_every_tick_keeps_the_contract_consistent(messages: tuple[InitMessage, l
     assert max(tick.fleet.homes_dark_by_contract for tick in ticks) > 0
     last = ticks[-1].fleet
     assert last.promise_kept is not None and last.penalty_usd > 0
-    assert silent > 0 and last.failover_p50_s is not None
+    assert warned > 0 and silent > 0

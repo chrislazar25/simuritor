@@ -68,7 +68,7 @@ def main() -> None:
                 "dark_contract": r.homes_dark_by_contract,
                 "grid_cuts": int((prev_grid & ~r.grid).sum()),
                 "called": r.utility_call,
-                "kept": r.utility_call and r.delivered_mw >= (r.promised_mw or 0) - 1e-9,
+                "kept": r.kept,
                 "delivered_mw": r.delivered_mw,
                 "headroom_mwh": r.headroom_mwh,
                 "penalty_usd": r.penalty_usd - prev_penalty,

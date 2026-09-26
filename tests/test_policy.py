@@ -51,6 +51,7 @@ def view(
             contract_mw=contract_mw,
             max_call_ticks=6,
             buffer_frac=0.2,
+            kept_tolerance=0.02,
             capacity_usd=0.0,
         ),
         forecast_min_f=lambda hours: forecast_f,

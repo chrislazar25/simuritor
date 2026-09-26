@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from backend.failover import TICK_S, DropOuts, FailoverConfig, Timeline, drop_outs, run_tick
+from backend.failover import TICK_S, DropOuts, FailoverConfig, Timeline, drop_outs, greedy, run_tick
 
 
 def play(
@@ -43,12 +43,21 @@ def test_warned_is_covered_after_reassign_silent_after_missed_heartbeats_too(war
     assert t.cover_kwh.tolist() == pytest.approx([0.0, 6.0 * (800 - cover_s) / 3600])
 
 
-def test_cover_is_pro_rata_to_spare_power() -> None:
-    """Spare power is max kW minus what the home already exports: 2 kW and 6 kW take 1 and 3."""
-    t = play(share=[4.0, 4.0, 4.0], export=[4.0, 10.0, 6.0], at_s=[0.0, None, None])
+def test_cover_comes_from_the_most_spare_first_fewest_homes() -> None:
+    """Spare power is max kW minus what the home already exports: 2, 6 and 4 kW spare.
+    4 kW lost: the 6 kW home takes it all. 9 kW lost: 6 kW, then 3 of the 4 kW home's."""
     left_h = (TICK_S - 11) / 3600
-    assert t.cover_kwh.tolist() == pytest.approx([0.0, 1.0 * left_h, 3.0 * left_h])
-    assert t.failovers[0].covered_by == 2 and t.failovers[0].cover_s == 11.0
+    t = play(share=[4.0, 4.0, 4.0, 4.0], export=[4.0, 10.0, 6.0, 8.0], at_s=[0.0, None, None, None])
+    assert t.cover_kwh.tolist() == pytest.approx([0.0, 0.0, 4.0 * left_h, 0.0])
+    assert t.failovers[0].covered_by == 1 and t.failovers[0].cover_s == 11.0
+    t = play(share=[9.0, 4.0, 4.0, 4.0], export=[9.0, 10.0, 6.0, 8.0], at_s=[0.0, None, None, None])
+    assert t.cover_kwh.tolist() == pytest.approx([0.0, 0.0, 6.0 * left_h, 3.0 * left_h])
+    assert t.failovers[0].covered_by == 2
+
+
+def test_greedy_ties_go_to_the_lowest_index_and_spare_can_run_out() -> None:
+    assert greedy(5.0, np.array([3.0, 0.0, 3.0])).tolist() == [3.0, 0.0, 2.0]
+    assert greedy(8.0, np.array([3.0, 0.0, 3.0])).tolist() == [3.0, 0.0, 3.0]
 
 
 def test_partial_cover_leaves_the_rest_uncovered_to_the_end_of_the_tick() -> None:

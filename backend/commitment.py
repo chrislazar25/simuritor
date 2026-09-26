@@ -31,6 +31,8 @@ class Commitment:
     """The longest a call can run."""
     buffer_frac: float
     """Spare each home keeps on top of its call share, as a fraction of the share, for failover."""
+    kept_tolerance: float
+    """A called interval counts as kept if delivery is at least (1 - this) x the promise."""
     capacity_usd: float
     """Capacity payment earned this tick, called or not."""
 
@@ -68,6 +70,9 @@ class UtilityContract:
     """⚠ Placeholder (≈ $100/kW-yr); Base's contract rates aren't public."""
     buffer_frac: float = 0.2
     """⚠ Failover spare per home, as a fraction of its call share."""
+    kept_tolerance: float = 0.02
+    """⚠ Ours: a called interval is kept within 2% of the promise (ADER's compliance deadband is
+    2 MW, far looser). The penalty still charges the whole shortfall."""
     max_calls_per_day: int = 1
     """Calls that may start per Central-time day (GVEC: one event per day on average)."""
     window_start_hour: int = 6
@@ -104,6 +109,7 @@ class UtilityContract:
             contract_mw=self.size_mw,
             max_call_ticks=self.max_call_ticks,
             buffer_frac=self.buffer_frac,
+            kept_tolerance=self.kept_tolerance,
             capacity_usd=capacity_usd,
         )
         if self._cooldown:
@@ -130,6 +136,7 @@ class UtilityContract:
             contract_mw=self.size_mw,
             max_call_ticks=self.max_call_ticks,
             buffer_frac=self.buffer_frac,
+            kept_tolerance=self.kept_tolerance,
             capacity_usd=capacity_usd,
         )
 

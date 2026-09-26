@@ -43,7 +43,7 @@ Every battery's energy is split into layers, filled bottom-up:
 - Paid two ways:
   - a **capacity payment** ($/MW-week, whether or not it's called; default $2,000/MW-week ≈ $100/kW-yr, in the range of a peaker's cost of new entry);
   - energy delivered during a call, paid at the interval price.
-- **Shortfall** (delivered < promised) is charged at the interval price. That's the penalty. Missed intervals are also counted, because repeated misses are what get an aggregator's qualification revoked.
+- **Shortfall** (delivered < promised) is charged at the interval price. That's the penalty. Missed intervals are also counted, because repeated misses are what get an aggregator's qualification revoked. An interval counts as **kept** if delivery is at least 98% of the promise (`kept_tolerance`); the penalty still charges the whole shortfall.
 
 ## The policy: a fixed priority list, per home, per 15-min tick
 1. **Off grid?** Tiers `standard`/`critical` power the house from the battery. Tier `none` goes dark and keeps its energy.
@@ -66,10 +66,10 @@ One home's share of the call drops out, so healthy homes raise their output to c
 | Time to cover | reassign latency: 5 s | detection + reassign: 11 s |
 
 - **Who drops out** (`backend/failover.py`, only homes with a call share make a failover): a device fault at a random second of the tick; a home whose export would reach its floor, at the second it gets there; a home losing the grid next tick, at a random second. The earliest reason wins.
-- **Reassign:** spread the lost share over healthy homes (on grid, not faulted, not dropping out this tick), pro rata to their spare: power = max kW − their export − cover already taken; energy = what's above their floor after their own export, for the rest of the tick. Partial cover is allowed.
+- **Reassign:** hand the lost share to healthy homes (on grid, not faulted, not dropping out this tick), greedily: the homes with the most spare first, so as few homes as possible take it. Spare: power = max kW − their export − cover already taken; energy = what's above their floor after their own export, for the rest of the tick. Partial cover is allowed.
 - **If nobody can take it**, the rest stays **uncovered** until the end of the tick. The lost kW × uncovered seconds is the shortfall: `delivered_mw` is the tick average, so the penalty and promise kept follow. Its time to cover is reported as "not covered".
 - **KPI:** time to cover **< 60 s**. Report **p50 and max** over covered failovers, plus the number uncovered. (p99 ≈ max at our failure counts.)
-- **Device faults** (`SilentDeviceFaults`, chaos): 0.005 per home-hour. 80% transient (a comms blip or reboot: back next tick); 20% hard (out for the rest of the replay: no truck rolls in an ice storm). A faulted home can't discharge while out; it still backs up its own house. Once a hard fault is known (missed heartbeats), the policy gives the home no share.
+- **Device faults** (`SilentDeviceFaults`, chaos): 0.001 per home-hour. 80% transient (a comms blip or reboot: back next tick); 20% hard (out for the rest of the replay: no truck rolls in an ice storm). A faulted home can't discharge while out; it still backs up its own house. Once a hard fault is known (missed heartbeats), the policy gives the home no share.
 
 ## Weather forecast error
 - The controller plans with a **forecast** = actual temperature + error. The error grows with lead time (default ±2°F at 6 h, ±6°F at 48 h) and has a configurable warm bias.
@@ -85,7 +85,7 @@ Maximise **net revenue** = capacity payment + energy − shortfall penalty − c
 |---|---|
 | Net revenue (penalty shown as subtext: `incl. −$X penalties`) | counters |
 | Promised vs delivered MW, shortfall shaded red | chart |
-| Promise kept (% of called intervals) | counters |
+| Promise kept (% of called intervals delivered within 2% of the promise) | counters |
 | Headroom (MWh, time average) | counters |
 | Homes dark: ran out vs by contract; critical homes ran out (must be 0) | counters + map |
 | Failovers: warned/silent count, time to cover p50/max, uncovered | counters + failover log |
@@ -138,7 +138,9 @@ Maximise **net revenue** = capacity payment + energy − shortfall penalty − c
 | Call trigger | price threshold | ADER dispatch is limited by bid price vs market price (ERCOT ADER Phase 3 doc) |
 | Heartbeat | 2 s; a silent home is declared out after 3 missed | ADER real-time telemetry interval. ⚠ The 3 is ours |
 | Reassign latency | 5 s | ⚠ our guess |
-| Silent device faults | 0.005 per home-hour (`--fault-rate`) | ⚠ our guess |
+| Silent device faults | 0.001 per home-hour (`--fault-rate`) | ⚠ our guess |
+| Kept tolerance | an interval is kept if delivery ≥ 98% of the promise | ⚠ ours; ADER's compliance deadband is 2 MW, far looser |
+| Rolling outage timing | each group's cycle shifted by a seeded 0–7 ticks, so cuts land on varied quarter hours | ⚠ ours |
 | Transient vs hard faults | 80% transient (back next tick), 20% hard (out for the rest of the replay) | ⚠ our guess: comms blips and reboots vs failed hardware nobody can reach in an ice storm |
 | Outage notice | half the homes about to lose the grid warn first | ⚠ our guess |
 | Per-home reserve | declared per battery | ADER registration asks for each battery's min operating SoC |

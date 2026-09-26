@@ -221,10 +221,11 @@ def test_a_new_device_fault_stops_the_export_at_its_second() -> None:
     assert r.kw.tolist() == pytest.approx([4.0]) and r.failovers == []  # no call share: nothing to cover
 
 
-def test_a_silent_fault_in_a_call_is_covered_in_11_s_but_the_gap_misses_the_promise() -> None:
+def test_a_silent_fault_in_a_call_is_covered_in_11_s_and_the_gap_is_charged() -> None:
     """12 kW promised, 6 kW each. Home 0 goes silent at 450 s; home 1 covers from 461 s.
 
-    The 11 s gap (6 kW) is a shortfall: the interval isn't kept, and the penalty is its price.
+    The 11 s gap (6 kW) is a shortfall of 0.6% of the promise: within the 2% tolerance, so the
+    interval is kept, but the penalty still charges it at the price.
     At 65 °F the reserve (2.4 kWh) is below the 20% floor (5 kWh), so home 1 has 16 kWh spare.
     """
     sim = tiny_sim(
@@ -237,15 +238,23 @@ def test_a_silent_fault_in_a_call_is_covered_in_11_s_but_the_gap_misses_the_prom
     assert r.kw.tolist() == pytest.approx([3.0, 6.0 + 6.0 * 439 / 900])
     shortfall_kwh = 6.0 * 11 / 3600
     assert r.delivered_mw == pytest.approx(0.012 - shortfall_kwh / 0.25 / 1000)
-    assert r.promise_kept == 0 and r.penalty_usd == pytest.approx(shortfall_kwh / 1000 * 1000)
+    assert r.kept and r.promise_kept == 1 and r.penalty_usd == pytest.approx(shortfall_kwh / 1000 * 1000)
     assert (r.failovers_warned, r.failovers_silent, r.failovers_uncovered) == (0, 1, 0)
     assert r.failover_p50_s == r.failover_max_s == 11.0
 
 
+@pytest.mark.parametrize(("kw", "kept"), [(11.76, True), (11.75, False)])
+def test_an_interval_is_kept_within_2_percent_of_the_promise(kw: float, kept: bool) -> None:
+    sim = tiny_sim(soc=[0.90], actions=["discharge"], kw=[kw], promised_kw=12.0)
+    r = sim.step()
+    assert r.kept == kept and r.promise_kept == int(kept)
+    assert r.penalty_usd == pytest.approx((12.0 - kw) / 1000 * 0.25 * 1000)  # the whole shortfall, kept or not
+
+
 def test_failover_stats_are_cumulative() -> None:
-    """Three call ticks, 4 kW from each of three homes:
-    0. home 0 silent at 300 s: covered in 11 s by the other two;
-    1. home 1 loses the grid next tick and warns (every outage warns here): covered in 5 s;
+    """Three call ticks, 4 kW from each of three homes (8 kW spare each):
+    0. home 0 silent at 300 s: covered in 11 s by one home (the first of two with the same spare);
+    1. home 1 loses the grid next tick and warns (every outage warns here): covered in 5 s by one;
     2. homes 0 and 2 go silent; home 1 is off grid: nobody left to cover either.
     """
     sim = tiny_sim(
@@ -262,8 +271,8 @@ def test_failover_stats_are_cumulative() -> None:
     sim.failover = FailoverConfig(outage_notice_frac=1.0)
     rs = [sim.step() for _ in range(3)]
     assert [[(f.home, f.warned, f.cover_s, f.covered_by) for f in r.failovers] for r in rs] == [
-        [(0, False, 11.0, 2)],
-        [(1, True, 5.0, 2)],
+        [(0, False, 11.0, 1)],
+        [(1, True, 5.0, 1)],
         [(0, False, None, 0), (2, False, None, 0)],
     ]
     assert [(r.failovers_warned, r.failovers_silent, r.failovers_uncovered) for r in rs] == [
@@ -392,7 +401,8 @@ def test_everyone_on_grid_outside_the_outage(replay: list[TickResult]) -> None:
 def test_rolling_outage_keeps_46_percent_out_and_homes_cycle(replay: list[TickResult]) -> None:
     during = [r for r in replay if OUTAGE_START <= r.frame.t < OUTAGE_END]
     assert during
-    assert all(r.homes_on_battery + r.homes_dark + r.homes_dark_by_contract == 230 for r in during)  # RollingOutage
+    off = [r.homes_on_battery + r.homes_dark + r.homes_dark_by_contract for r in during]
+    assert np.mean(off) == pytest.approx(230, rel=0.05)  # RollingOutage: 46% on average
     grid = np.array([r.grid for r in during])
     cycled = (grid.any(axis=0) & ~grid.all(axis=0)).sum()
     assert cycled == 450  # every rotating home is on grid at some point in the window, and off at another
@@ -474,21 +484,22 @@ def test_naive_baseline_sells_the_reserve_then_buys_it_back_at_crisis_prices(
 
 
 def test_failover_counts_add_up_over_the_replay(replay: list[TickResult]) -> None:
-    """Default chaos (0.005 faults per home-hour): failovers happen only in calls, and every count is
-    the running total of the events. No warned ones: calls run 06:00-07:30 during the outage, and
-    the rotation's cuts fall on even hours, so no home with a share loses the grid mid-call."""
+    """Default chaos: failovers happen only in calls, both warned and silent (rolling cuts land
+    mid-call), and every count is the running total of the events."""
     events = [f for r in replay for f in r.failovers]
     assert events and all(r.utility_call for r in replay if r.failovers)
     last = replay[-1]
-    assert last.failovers_warned == sum(f.warned for f in events) == 0
-    assert last.failovers_silent == sum(not f.warned for f in events)
+    assert last.failovers_warned == sum(f.warned for f in events) > 0
+    assert last.failovers_silent == sum(not f.warned for f in events) > 0
     assert last.failovers_uncovered == sum(f.cover_s is None for f in events)
-    assert last.failover_p50_s == last.failover_max_s == 11.0
+    covered = [f.cover_s for f in events if f.cover_s is not None]
+    assert last.failover_max_s == (max(covered) if covered else None)
 
 
-def test_no_device_faults_no_failovers() -> None:
-    last = run(uri_replay(seed=0, fault_rate=0.0))[-1]
-    assert (last.failovers_warned, last.failovers_silent, last.failover_p50_s) == (0, 0, None)
+def test_without_device_faults_every_failover_is_a_home_losing_the_grid_next_tick() -> None:
+    replay = run(uri_replay(seed=0, fault_rate=0.0))
+    events = [(r, n, f) for r, n in zip(replay, replay[1:]) for f in r.failovers]
+    assert events and all(r.grid[f.home] and not n.grid[f.home] for r, n, f in events)
 
 
 def test_contract_policy_leaves_fewer_homes_dark_than_naive(replay: list[TickResult]) -> None:

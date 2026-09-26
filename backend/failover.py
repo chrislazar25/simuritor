@@ -4,8 +4,9 @@ The sim ticks every 15 min, but a promise is kept or missed second by second
 (docs/dispatch-design.md, "Failover"). Each tick some homes stop exporting at a second
 of the tick: a device fault, a battery about to hit its floor, a home about to lose the
 grid. When a home with a call share drops out, the controller notices (at once if the
-home warned, after missed heartbeats if not), then reassigns the share to healthy homes'
-spare power and energy, pro rata. What they can't take stays uncovered to the end of the tick.
+home warned, after missed heartbeats if not), then reassigns the share to the healthy homes
+with the most spare power and energy first, so as few homes as possible take it. What they
+can't take stays uncovered to the end of the tick.
 
 Pure: arrays in, arrays out; the caller passes the random generator.
 """
@@ -15,7 +16,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from backend.data import TICK
-from backend.policy import pro_rata
 
 TICK_S = TICK.total_seconds()
 """900."""
@@ -127,7 +127,7 @@ def run_tick(
 
     Every home exports `export_kw` until its drop-out. Each drop-out of a home with a call share
     (`share_kw`, part of `export_kw`) is covered `cover_delay_s` later by the homes in `can_cover`
-    that don't drop out themselves this tick, pro rata to their spare, for the rest of the tick:
+    that don't drop out themselves this tick, most spare first (`greedy`), for the rest of the tick:
     spare power is max kW minus their export and the cover they already took; spare energy is
     `spare_kwh` (above their floor after their own export) minus the cover they already gave.
     Cover can be partial; the rest of the share stays uncovered to the end of the tick.
@@ -147,7 +147,7 @@ def run_tick(
         start_s = min(at_s + delay_s, TICK_S)
         left_h = (TICK_S - start_s) / 3600
         spare_kw = power if left_h == 0 else np.minimum(power, energy / left_h)
-        take = pro_rata(lost_kw, weight=spare_kw, cap=spare_kw)
+        take = greedy(lost_kw, spare_kw)
         power -= take
         energy -= take * left_h
         cover += take * left_h
@@ -164,3 +164,16 @@ def run_tick(
             )
         )
     return Timeline(exported_kwh=exported + cover, cover_kwh=cover, failovers=failovers)
+
+
+def greedy(total: float, spare: np.ndarray) -> np.ndarray:
+    """Take `total` from the entries with the most `spare` first (ties: lowest index), none
+    above its spare: the fewest entries that can cover it. Sums to less only when spare runs out."""
+    take = np.zeros(len(spare))
+    left = total
+    for k in np.argsort(-spare, kind="stable"):
+        if left <= 0 or spare[k] <= 0:
+            break
+        take[k] = min(spare[k], left)
+        left -= take[k]
+    return take

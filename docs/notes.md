@@ -25,25 +25,28 @@
   - Emergency-uncapped triples the called ticks. At 10–30% it barely hurts (still ~80–90% kept); at 60% it breaks (27% kept, penalties 3.4×). That's where the stress case bites.
   - Most of the loss is the homeowner contract, not the utility one: with no contract at all the fleet still ends at −$204k, from recovering reserves at ~$9,000/MWh as the forecast gets colder. The contract's own cost at 10% is ~$7k.
   - Dark home-hours now fall slightly as the contract grows (3,284 → 3,160): call-ready recharge keeps more energy in batteries that backup then uses.
-  - (That table was run before device faults existed: it is the `--fault-rate 0` row below.)
-- Failover with silent device faults, seed 0, Feb 10–20, default call rules (`uv run python -m scripts.run_replay --contract-size F --fault-rate R`). Every failover in these runs is silent (see the follow-up on warned ones), so every covered one takes 11 s: p50 = max = 11 s throughout. "Hard out" is homes with a hard fault by Feb 20.
+  - (That table was run before device faults, the outage offsets and the 2% kept tolerance; the one below supersedes it.)
+- Failover, seed 0, Feb 10–20, default call rules, with the 2% kept tolerance, rolling cuts on varied quarter hours, and greedy cover (`uv run python -m scripts.run_replay --contract-size F --fault-rate R`). Failovers are warned or silent: rolling cuts that land mid-call make both (half the homes warn, `outage_notice_frac`), and device faults are all silent. "Hard out" is homes with a hard device fault by Feb 20. 47 called ticks in every run.
 
-  | Contract | Fault rate /home-h | Kept (47 called ticks) | Penalties | Failovers (silent) | Uncovered | Hard out | Dark home-h | Net revenue |
-  |---|---|---|---|---|---|---|---|---|
-  | 10% | 0 | 89.4% | $3,639 | 0 | 0 | 0 | 3,284 | −$210,748 |
-  | 10% | 0.005 | 80.9% | $3,337 | 7 | 1 | 111 | 3,254 | −$210,950 |
-  | 10% | 0.02 | 46.8% | $2,588 | 47 | 1 | 324 | 3,230 | −$211,775 |
-  | 30% | 0 | 76.6% | $18,159 | 0 | 0 | 0 | 3,214 | −$229,909 |
-  | 30% | 0.005 | 53.2% | $24,927 | 9 | 1 | 111 | 3,197 | −$239,759 |
-  | 30% | 0.02 | 17.0% | $62,807 | 45 | 13 | 324 | 3,177 | −$274,711 |
-  | 60% | 0 | 46.8% | $110,871 | 0 | 0 | 0 | 3,160 | −$349,224 |
-  | 60% | 0.005 | 34.0% | $133,229 | 7 | 4 | 111 | 3,163 | −$367,949 |
-  | 60% | 0.02 | 2.1% | $188,579 | 43 | 27 | 324 | 3,164 | −$408,586 |
+  | Contract | Fault rate /home-h | Kept | Penalties | Warned | Silent | Uncovered | Cover p50 / max | Hard out | Dark home-h | Net revenue |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | 10% | 0.001 | 87.2% | $5,586 | 135 | 178 | 0 | 11 s / 11 s | 21 | 3,268 | −$214,461 |
+  | 10% | 0.005 | 87.2% | $5,297 | 110 | 162 | 0 | 11 s / 11 s | 111 | 3,254 | −$214,536 |
+  | 10% | 0.02 | 83.0% | $4,278 | 62 | 142 | 3 | 11 s / 11 s | 324 | 3,230 | −$215,186 |
+  | 30% | 0.001 | 68.1% | $23,380 | 93 | 137 | 86 | 11 s / 11 s | 21 | 3,205 | −$233,655 |
+  | 30% | 0.005 | 57.4% | $28,587 | 79 | 124 | 105 | 11 s / 11 s | 111 | 3,197 | −$241,550 |
+  | 30% | 0.02 | 40.4% | $63,154 | 44 | 107 | 119 | 11 s / 11 s | 324 | 3,177 | −$275,235 |
+  | 60% | 0.001 | 44.7% | $116,284 | 93 | 137 | 230 | n/a (none covered) | 21 | 3,160 | −$352,415 |
+  | 60% | 0.005 | 40.4% | $133,589 | 79 | 123 | 199 | 11 s / 11 s | 111 | 3,163 | −$367,471 |
+  | 60% | 0.02 | 19.1% | $188,926 | 44 | 105 | 133 | 11 s / 11 s | 324 | 3,164 | −$409,045 |
 
-  - At 10% the buffer covers almost every failover, but promise kept still falls from 89% to 47% at 0.02, while penalties barely move. The 11 s before cover is a shortfall, and an interval is kept only if delivery meets the promise exactly. During the storm the fleet delivers exactly the promise (no headroom left to sell on top), so any failover in a called tick costs that tick. See the follow-up on a tolerance or an over-delivery margin.
-  - At 30–60% the buffer runs out: uncovered failovers rise with the fault rate (13 and 27 at 0.02), and so do penalties.
-  - Hard faults pile up over the 10 days: 111 homes (22%) by Feb 20 at 0.005, 324 (65%) at 0.02. Those homes can't export, so they keep their energy for backup: dark home-hours fall slightly as the fault rate rises.
-- Rolling outages (⚠ assumption): ERCOT and the utilities intended short rotating outages, but many circuits stayed out for days (critical-load circuits exempted, the sheer volume of load shed, ice damage). `RollingOutage` models both: 10% of homes never restored for the whole window, the rest cycling 4 h off / 6 h on (46% of the fleet out at once). The durations and shares are our assumptions, not sourced; say so in the README.
+  - Most failovers now come from the rolling outage, not device faults: a group cut mid-call drops ~90 homes at once. That's why the counts barely depend on the fault rate, and why they fall as it rises (hard-faulted homes get no call share, so fewer share holders are left to drop out).
+  - Warned cover takes 5 s and silent 11 s. Silent failovers outnumber warned ones (the outage's silent half plus every device fault), so p50 = max = 11 s. It's under the 60 s KPI everywhere.
+  - At 10% the buffer covers every failover but 3, and with the tolerance an 11 s gap no longer costs the interval: kept stays at 83–87% across fault rates. The misses left are the storm days when the fleet's energy runs out (Feb 15–16), as before.
+  - At 30% and above the buffer can't cover a group cut: 86–119 uncovered at 30%, 133–230 at 60%. At 60% during the outage each on-grid home's share is already at max kW, so there's no spare power at all; the few 60% failovers that were covered (at 0.005 and 0.02) all happened outside the outage (Feb 11–14, Feb 19).
+  - Greedy cover takes 1 home per failover (median) at 10%, 2 at 30% (at most 10).
+  - Hard faults pile up over the 10 days: 21 homes (4%) by Feb 20 at 0.001, 111 (22%) at 0.005, 324 (65%) at 0.02. Those homes can't export, so they keep their energy for backup: dark home-hours fall slightly as the fault rate rises.
+- Rolling outages (⚠ assumption): ERCOT and the utilities intended short rotating outages, but many circuits stayed out for days (critical-load circuits exempted, the sheer volume of load shed, ice damage). `RollingOutage` models both: 10% of homes never restored for the whole window, the rest cycling 4 h off / 6 h on in 5 groups, each group's cycle shifted by a seeded 0–7 ticks so cuts land on varied quarter hours (46% of the fleet out on average, 1–3 groups at a time). The durations and shares are our assumptions, not sourced; say so in the README.
 - Household drain (⚠ assumption): lowered from ~7 kW to ~2.5 kW at 13 °F so a full average battery lasts ~12 h on backup (homes shed load on backup; reasoning in `FleetConfig`). No single value makes both battery sizes last 10–14 h (25 kWh needs ≤ 2.5 kW, 39.2 kWh needs ≥ 2.8 kW).
 
 ## To do when we reach that step
@@ -52,9 +55,7 @@
 - Map visual pass: the basemap is the stock OpenFreeMap "liberty" style, hard-coded in `Map.tsx`; the design wants a muted style owned by the theme. The dot colours are read from the CSS tokens once when the map loads, so a theme switch would need to re-apply the circle paint.
 - Chart markers: the $1,000 sell threshold and the Feb 15 02:00 outage start are copied into `frontend/src/Charts.tsx` from `backend/policy.py` and `backend/faults.py`, because the wire doesn't carry them. When policies or outages become swappable, send them in `init` (a schema change) and drop the copies.
 - `failovers_*` counts and p50/max are cumulative over the replay; per-tick detail is the `failovers` event list. `promise_kept` is a 0–1 fraction (not ×100).
-- No warned failovers in the Uri replay, although the model has them. Calls start at 06:00 (the price is over the trigger all night, and the window opens then) and last 1.5 h. The rolling outage's cuts fall on even hours (02:00 + 2 h steps), so no home with a call share loses the grid mid-call. Batteries never hit their floor mid-tick either: ContractPolicy caps each home's export at its energy above the floor. Both warned paths are unit-tested. They'd show up with an odd-hour outage schedule, calls starting at other times, or a policy that overcommits.
-- Promise kept is all-or-nothing per interval (`SLACK_MW` = 1e-9 MW), so a failover covered in 11 s still misses the interval when the fleet delivers exactly the promise. Options: a tolerance like ERCOT's base-point deviation band, or have ContractPolicy over-deliver a small margin from the buffer (≈ share × 11 s / 900 s) during calls. Decide before the insight sweep: it moves the "safe" contract size.
-- Cover is spread pro rata over every healthy home with spare, so the failover log reads "covered in 11 s by 370 homes". Real dispatch might pick the few homes with the most spare; that's cosmetic for the numbers but changes the log.
+- Promise kept counts an interval as kept within 2% of the promise (`kept_tolerance`, ⚠ ours). ADER's compliance deadband is 2 MW, far looser: at 3.6 MW it would forgive more than half the promise. The penalty still charges the whole shortfall. Revisit if Base knows the tolerance in its utility contracts.
 - A cover due after the tick ends (a silent drop-out in the last 11 s) counts as covered in 11 s, with the rest of the tick uncovered; next tick's plan takes over.
 - Device faults: a faulted home can't discharge but still backs up its own house and can still charge (the local controller runs on). Faults hit every home at the same rate, on or off grid, calls or not; hard ones accumulate from Feb 10. NaivePolicy doesn't split calls (`Decisions.call_kw` None), so it gets no failovers: its faulted homes just stop exporting.
 - The sim asks the grid faults about the next tick, to warn homes ahead of an outage. A `Fault` must be a function of the time alone (both current faults are).
