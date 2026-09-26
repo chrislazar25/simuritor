@@ -71,7 +71,7 @@ def tick_message(fleet: Fleet, r: TickResult) -> TickMessage:
             revenue_usd=round(r.revenue_usd, 2),
             revenue_tick_usd=round(r.revenue_tick_usd, 2),
             penalty_usd=0.0,  # filled by ContractPolicy/failover
-            promise_kept_pct=None,  # filled by ContractPolicy/failover
+            promise_kept=None,  # filled by ContractPolicy/failover
             failovers_warned=0,  # filled by ContractPolicy/failover
             failovers_silent=0,  # filled by ContractPolicy/failover
             failovers_uncovered=0,  # filled by ContractPolicy/failover

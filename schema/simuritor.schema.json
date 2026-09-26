@@ -124,7 +124,7 @@
           "minimum": 0,
           "type": "number"
         },
-        "promise_kept_pct": {
+        "promise_kept": {
           "anyOf": [
             {
               "maximum": 1,
@@ -191,7 +191,7 @@
         "revenue_usd",
         "revenue_tick_usd",
         "penalty_usd",
-        "promise_kept_pct",
+        "promise_kept",
         "failovers_warned",
         "failovers_silent",
         "failovers_uncovered",
