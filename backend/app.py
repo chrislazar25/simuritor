@@ -6,17 +6,21 @@ gets sent is up to the session: `ReplaySession` steps a fresh sim for each
 connection.
 
 Run: uv run uvicorn backend.app:app --reload --port 8000
+     SIMURITOR_POLICY=naive uv run uvicorn ...   (the baseline; default `contract`)
 """
 
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
+from functools import partial
 from typing import Protocol
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from backend.policy import POLICIES
 from backend.schema import (
     ClientMessage,
     InitMessage,
@@ -31,6 +35,10 @@ from backend.serialize import init_message, tick_message
 from backend.sim import Sim, uri_replay
 
 DEFAULT_TICKS_PER_SEC = 8.0
+POLICY = os.environ.get("SIMURITOR_POLICY", "contract")
+"""A name from `backend.policy.POLICIES`."""
+if POLICY not in POLICIES:
+    raise ValueError(f"SIMURITOR_POLICY={POLICY!r}; expected one of {sorted(POLICIES)}")
 
 # uvicorn configures this logger, so our lines show up in the server console.
 log = logging.getLogger("uvicorn.error")
@@ -57,7 +65,7 @@ class ReplaySession:
     Speed survives a reset.
     """
 
-    def __init__(self, new_sim: Callable[[], Sim] = uri_replay) -> None:
+    def __init__(self, new_sim: Callable[[], Sim] = partial(uri_replay, policy=POLICY)) -> None:
         self.new_sim = new_sim
         self.sim = new_sim()
         self.playing = False

@@ -61,22 +61,22 @@ def tick_message(fleet: Fleet, r: TickResult) -> TickMessage:
             available_mw=r.available_mw,
             promised_mw=r.promised_mw,
             delivered_mw=r.delivered_mw,
-            utility_call=False,  # filled by ContractPolicy/failover
+            utility_call=r.utility_call,
             homes_on_grid=r.homes_on_grid,
             homes_exporting=int((r.grid & (r.action == "discharge")).sum()),
             homes_on_battery=r.homes_on_battery,
             homes_dark=r.homes_dark,
-            homes_dark_by_contract=0,  # filled by ContractPolicy/failover
-            headroom_mwh=0.0,  # filled by ContractPolicy/failover
+            homes_dark_by_contract=r.homes_dark_by_contract,
+            headroom_mwh=r.headroom_mwh,
             revenue_usd=round(r.revenue_usd, 2),
             revenue_tick_usd=round(r.revenue_tick_usd, 2),
-            penalty_usd=0.0,  # filled by ContractPolicy/failover
-            promise_kept=None,  # filled by ContractPolicy/failover
-            failovers_warned=0,  # filled by ContractPolicy/failover
-            failovers_silent=0,  # filled by ContractPolicy/failover
-            failovers_uncovered=0,  # filled by ContractPolicy/failover
-            failover_p50_s=None,  # filled by ContractPolicy/failover
-            failover_max_s=None,  # filled by ContractPolicy/failover
+            penalty_usd=round(r.penalty_usd, 2),
+            promise_kept=r.promise_kept,
+            failovers_warned=0,  # filled by failover
+            failovers_silent=0,  # filled by failover
+            failovers_uncovered=0,  # filled by failover
+            failover_p50_s=None,  # filled by failover
+            failover_max_s=None,  # filled by failover
         ),
-        failovers=[],  # filled by ContractPolicy/failover
+        failovers=[],  # filled by failover
     )

@@ -1,23 +1,26 @@
 """Fleet simulator: seeded homes and one 15-minute tick of physics and accounting.
 
-Tick order: faults decide who has grid power -> the policy proposes actions ->
-physics applies them within battery limits -> accounting. The sim keeps its own
-state (numpy arrays, one entry per home); `backend/serialize.py` turns it into
-wire messages.
+Tick order: faults decide who has grid power -> the contracts say what's owed (each
+home's reserve, the utility's call) -> the policy proposes actions -> physics applies
+them within battery limits -> accounting. The sim keeps its own state (numpy arrays,
+one entry per home); `backend/serialize.py` turns it into wire messages.
 """
 
-from collections.abc import Sequence
+import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from functools import partial
 
 import numpy as np
 
-from backend.data import TICK, Frame, UriParquetSource
+from backend.commitment import CommitmentSource, UtilityContract
+from backend.data import HOURS_PER_TICK, Frame, UriParquetSource
 from backend.faults import Fault, RollingOutage
-from backend.policy import FleetView, NaivePolicy, Policy
+from backend.policy import POLICIES, FleetView, Policy
 from backend.schema import Household, Tier
 
-HOURS_PER_TICK = TICK / timedelta(hours=1)  # 0.25
+SLACK_MW = 1e-9
+"""Delivery this close to the promise counts as kept (float sums)."""
 
 
 @dataclass(frozen=True)
@@ -37,10 +40,12 @@ class FleetConfig:
     )
     tier_mix: tuple[tuple[Tier, float], ...] = (("none", 0.1), ("standard", 0.8), ("critical", 0.1))
     """⚠ Homeowner backup contracts (docs/dispatch-design.md). Every `medical` household is `critical`."""
+    backup_hours: tuple[tuple[Tier, float], ...] = (("none", 0.0), ("standard", 8.0), ("critical", 16.0))
+    """⚠ Hours of backup each tier's reserve must cover at the forecast temperature."""
     start_soc: tuple[float, float] = (0.60, 0.95)
     reserve_floor: float = 0.20
-    max_kw: float = 10.0
-    """⚠ Max charge/discharge power per home."""
+    max_kw: float = 12.0
+    """⚠ Max charge/discharge power per home (25 kWh ÷ 1.5 h ≈ 17 kW is an upper bound; ask Base)."""
     drain_base_kw: float = 0.3
     drain_kw_per_degf: float = 0.042
     """⚠ House load on backup, kW = base + per_degf * max(0, 65 - temp °F): 2.48 kW at 13 °F.
@@ -81,6 +86,16 @@ def assign_tiers(
     return tier
 
 
+def forecast_min_f(frames: Sequence[Frame], i: int, hours: float) -> float:
+    """Coldest temperature over the next `hours` from tick `i` (this tick included), °F.
+
+    Perfect foresight for now: the actual temperatures, cut short at the end of the replay.
+    The forecast error model (docs/dispatch-design.md, "Weather forecast error") replaces this.
+    """
+    n = max(1, math.ceil(hours / HOURS_PER_TICK))
+    return min(f.temp_f for f in frames[i : i + n])
+
+
 def read_only(a: np.ndarray) -> np.ndarray:
     a.setflags(write=False)
     return a
@@ -110,6 +125,16 @@ class Fleet:
         cfg = self.config
         return (cfg.drain_base_kw + cfg.drain_kw_per_degf * max(0.0, 65.0 - temp_f)) * self.drain_factor
 
+    def reserve_kwh(self, forecast_min_f: Callable[[float], float]) -> np.ndarray:
+        """Homeowner contract: enough energy for the tier's backup hours at the coldest
+        forecast temperature over those hours, capped at capacity. Tier `none` keeps none."""
+        reserve = np.zeros(len(self))
+        for tier, hours in self.config.backup_hours:
+            if hours > 0:
+                home = self.tier == tier
+                reserve[home] = hours * self.drain_kw(forecast_min_f(hours))[home]
+        return np.minimum(reserve, self.capacity_kwh)
+
 
 @dataclass(frozen=True, slots=True)
 class TickResult:
@@ -123,29 +148,54 @@ class TickResult:
     """Battery power magnitude; direction comes from `action`."""
     src: np.ndarray
     conf: np.ndarray
+    reserve_kwh: np.ndarray
+    """Each home's contract reserve this tick."""
     available_mw: float
     """Exportable at the start of the tick: homes on grid, above the reserve floor."""
     delivered_mw: float
+    utility_call: bool
     promised_mw: float | None
+    """0 outside calls; None when no commitment source is configured."""
     homes_on_grid: int
     homes_on_battery: int
     homes_dark: int
+    """Grid down and battery empty (ran out). Tier `none` homes count as dark by contract instead."""
+    homes_dark_by_contract: int
+    """Grid down, tier `none`: no backup, whatever the battery holds."""
+    headroom_mwh: float
+    """Fleet energy above each home's contract reserve, end of tick."""
     revenue_tick_usd: float
+    """Energy (exports - imports at the price) + capacity payment - shortfall penalty."""
     revenue_usd: float
+    penalty_usd: float
+    """Cumulative shortfall penalties."""
+    promise_kept: float | None
+    """Share of called ticks so far where delivery met the promise; None before the first call."""
 
 
 class Sim:
     """Steps a fleet through a list of frames, one tick per `step()`."""
 
-    def __init__(self, frames: list[Frame], fleet: Fleet, policy: Policy, faults: Sequence[Fault]) -> None:
+    def __init__(
+        self,
+        frames: list[Frame],
+        fleet: Fleet,
+        policy: Policy,
+        faults: Sequence[Fault],
+        commitment: CommitmentSource | None = None,
+    ) -> None:
         if not frames:
             raise ValueError("no frames to replay")
         self.frames = frames
         self.fleet = fleet
         self.policy = policy
         self.faults = faults
+        self.commitment = commitment
         self.i = 0
         self.revenue_usd = 0.0
+        self.penalty_usd = 0.0
+        self.called_ticks = 0
+        self.kept_ticks = 0
 
     @property
     def done(self) -> bool:
@@ -165,19 +215,35 @@ class Sim:
         read_only(grid)
         exportable = np.where(grid, np.clip(energy - cfg.reserve_floor * cap, 0.0, max_kwh), 0.0)
 
+        forecast = partial(forecast_min_f, self.frames, self.i)
+        reserve = read_only(fleet.reserve_kwh(forecast))
+        owed = None if self.commitment is None else self.commitment.commit(frame)
         view = FleetView(
             soc=fleet.soc,
             grid=grid,
             capacity_kwh=cap,
             household=fleet.household,
+            tier=fleet.tier,
+            reserve_kwh=reserve,
             reserve_floor=cfg.reserve_floor,
+            max_kw=cfg.max_kw,
+            commitment=owed,
+            forecast_min_f=forecast,
         )
         decisions = self.policy.decide(frame, view)
 
-        # Physics has the last word: no grid means backup, and backup needs the grid down.
-        action = np.where(grid, np.where(decisions.action == "backup", "hold", decisions.action), "backup")
-        exported = np.where(action == "discharge", exportable, 0.0)
-        imported = np.where(action == "charge", np.clip(cap - energy, 0.0, max_kwh), 0.0)
+        # Physics has the last word: no grid means backup (except tier `none`: no backup by
+        # contract, the battery keeps its energy), and backup needs the grid down.
+        no_backup = fleet.tier == "none"
+        action = np.where(
+            grid,
+            np.where(decisions.action == "backup", "hold", decisions.action),
+            np.where(no_backup, "hold", "backup"),
+        )
+        target_kwh = np.inf if decisions.kw is None else np.nan_to_num(decisions.kw, nan=np.inf) * HOURS_PER_TICK
+        target_kwh = np.maximum(target_kwh, 0.0)
+        exported = np.where(action == "discharge", np.minimum(exportable, target_kwh), 0.0)
+        imported = np.where(action == "charge", np.minimum(np.clip(cap - energy, 0.0, max_kwh), target_kwh), 0.0)
         # Backup may go below the reserve floor, down to empty: that's what the reserve is for.
         house_kwh = fleet.drain_kw(frame.temp_f) * HOURS_PER_TICK
         backed_up = np.where(action == "backup", np.minimum(house_kwh, np.minimum(energy, max_kwh)), 0.0)
@@ -188,9 +254,21 @@ class Sim:
         soc = read_only(np.clip((energy - exported - backed_up + imported) / cap, 0.0, 1.0))
         fleet.soc = soc
 
+        delivered_mw = float(exported.sum() / HOURS_PER_TICK / 1000)
         revenue_tick = float((exported.sum() - imported.sum()) / 1000 * frame.price)
+        if owed is not None:
+            revenue_tick += owed.capacity_usd
+            shortfall_mw = owed.promised_mw - delivered_mw
+            if shortfall_mw > SLACK_MW:
+                penalty = shortfall_mw * HOURS_PER_TICK * max(frame.price, 0.0)  # a penalty never pays out
+                revenue_tick -= penalty
+                self.penalty_usd += penalty
+            if owed.call:
+                self.called_ticks += 1
+                self.kept_ticks += shortfall_mw <= SLACK_MW
         self.revenue_usd += revenue_tick
         self.i += 1
+        off = ~grid
         return TickResult(
             frame=frame,
             grid=grid,
@@ -199,27 +277,42 @@ class Sim:
             kw=read_only(moved / HOURS_PER_TICK),
             src=decisions.src,
             conf=decisions.conf,
+            reserve_kwh=reserve,
             available_mw=float(exportable.sum() / HOURS_PER_TICK / 1000),
-            delivered_mw=float(exported.sum() / HOURS_PER_TICK / 1000),
-            promised_mw=None,  # no commitment source yet
+            delivered_mw=delivered_mw,
+            utility_call=owed is not None and owed.call,
+            promised_mw=None if owed is None else owed.promised_mw,
             homes_on_grid=int(grid.sum()),
-            homes_on_battery=int((~grid & (soc > 0)).sum()),
-            homes_dark=int((~grid & (soc == 0)).sum()),
+            homes_on_battery=int((off & ~no_backup & (soc > 0)).sum()),
+            homes_dark=int((off & ~no_backup & (soc == 0)).sum()),
+            homes_dark_by_contract=int((off & no_backup).sum()),
+            headroom_mwh=float(np.maximum(soc * cap - reserve, 0.0).sum() / 1000),
             revenue_tick_usd=revenue_tick,
             revenue_usd=self.revenue_usd,
+            penalty_usd=self.penalty_usd,
+            promise_kept=self.kept_ticks / self.called_ticks if self.called_ticks else None,
         )
 
 
-def uri_replay(seed: int = 0, config: FleetConfig = FleetConfig(), frames: list[Frame] | None = None) -> Sim:
-    """Tonight's wiring: Uri frames, a seeded fleet, the naive policy and rolling outages.
+def uri_replay(
+    seed: int = 0,
+    config: FleetConfig = FleetConfig(),
+    frames: list[Frame] | None = None,
+    policy: str = "contract",
+    contract_size: float | None = UtilityContract.size_frac,
+) -> Sim:
+    """Tonight's wiring: Uri frames, a seeded fleet, a policy from `POLICIES`, rolling outages,
+    and a utility contract of `contract_size` x nameplate (None: no contract, `promised_mw` null).
 
     One seed, split into independent streams, so the fleet and the outage don't reshuffle each other.
     """
     fleet_rng, fault_rng = (np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(2))
     fleet = Fleet(config, fleet_rng)
+    nameplate_mw = config.n_homes * config.max_kw / 1000
     return Sim(
         frames=UriParquetSource().frames() if frames is None else frames,
         fleet=fleet,
-        policy=NaivePolicy(),
+        policy=POLICIES[policy](),
         faults=[RollingOutage(len(fleet), fault_rng)],
+        commitment=None if contract_size is None else UtilityContract(nameplate_mw, size_frac=contract_size),
     )

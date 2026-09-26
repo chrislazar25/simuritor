@@ -6,12 +6,14 @@ physics afterwards, so a home without grid power always runs on `backup`
 whatever the policy asked for.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
 
-from backend.data import Frame
+from backend.commitment import Commitment
+from backend.data import HOURS_PER_TICK, Frame
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,8 +26,18 @@ class FleetView:
     """True where the home has grid power this tick."""
     capacity_kwh: np.ndarray
     household: np.ndarray
+    tier: np.ndarray
+    """`Tier` strings: each home's backup contract."""
+    reserve_kwh: np.ndarray
+    """Homeowner contract: energy kept for backup this tick (tier hours x drain at the forecast temperature)."""
     reserve_floor: float
     """SoC below which the fleet never exports."""
+    max_kw: float
+    """Max charge/discharge power per home."""
+    commitment: Commitment | None
+    """What the fleet owes the utility this tick; None when no commitment source is configured."""
+    forecast_min_f: Callable[[float], float]
+    """Coldest forecast temperature over the next `hours` (this tick included), °F."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +50,8 @@ class Decisions:
     """`Source` strings: which tier of the decision stack decided."""
     conf: np.ndarray
     """Confidence 0-1; NaN where the tier has none (rules)."""
+    kw: np.ndarray | None = None
+    """Target power for `charge`/`discharge`, kW; NaN (or no array) = as much as the sim allows."""
 
 
 class Policy(Protocol):
@@ -72,3 +86,89 @@ class NaivePolicy:
         action = np.where(discharge, "discharge", np.where(charge, "charge", "hold"))
         n = len(fleet.soc)
         return Decisions(action=action, src=np.full(n, "rule"), conf=np.full(n, np.nan))
+
+
+@dataclass(frozen=True, slots=True)
+class ContractPolicy:
+    """Keeps both contracts: a fixed priority list per home (docs/dispatch-design.md, "The policy").
+
+    1. Off grid: backup (the sim enforces it; tier `none` goes dark by contract).
+    2. Protect the reserve: never export below the home's floor, its contract reserve or the
+       fleet's reserve floor, whichever is higher.
+    3. Utility call: split the promised MW across on-grid homes pro rata to energy above their
+       floor, none above max kW or what it holds this tick (the excess goes to the others).
+    4. Buffer: a home with a call share keeps `buffer_frac` x its share spare, in power and in
+       energy for the rest of the call. Fleet buffer = `buffer_frac` x promised MW.
+    5. Headroom, what's left after 2-4: export it if the price is at least `export_at_usd`
+       (during a call too). Else charge if the price is at most `charge_at_usd`, or back up to
+       the floor if on grid below it.
+    6. Pre-charge (`precharge`): a cold snap in the forecast and a moderate price: charge to `precharge_soc`.
+    """
+
+    export_at_usd: float = 1000.0
+    charge_at_usd: float = 30.0
+    precharge: bool = True
+    precharge_hours: float = 24.0
+    """Look this far ahead for a cold snap..."""
+    precharge_below_f: float = 32.0
+    """...colder than this, °F..."""
+    precharge_max_usd: float = 200.0
+    """...and charge while the price is at most this, $/MWh..."""
+    precharge_soc: float = 0.95
+    """...up to this SoC."""
+
+    def decide(self, frame: Frame, fleet: FleetView) -> Decisions:
+        n, h = len(fleet.soc), HOURS_PER_TICK
+        cap = fleet.capacity_kwh
+        energy = fleet.soc * cap
+        floor = np.maximum(fleet.reserve_kwh, fleet.reserve_floor * cap)
+        above = np.where(fleet.grid, np.maximum(energy - floor, 0.0), 0.0)
+
+        share = np.zeros(n)
+        held_kw = held_kwh = np.zeros(n)
+        c = fleet.commitment
+        if c is not None and c.call:
+            share = pro_rata(c.promised_mw * 1000, weight=above, cap=np.minimum(fleet.max_kw, above / h))
+            held_kw = (1 + c.buffer_frac) * share
+            held_kwh = held_kw * c.ticks_left * h
+        headroom_kw = np.clip(np.minimum(fleet.max_kw - held_kw, (above - held_kwh) / h), 0.0, None)
+        export_kw = share + (headroom_kw if frame.price >= self.export_at_usd else 0.0)
+
+        charge_kw = np.where(fleet.grid & (energy < floor), np.minimum(fleet.max_kw, (floor - energy) / h), 0.0)
+        if self.precharge and frame.price <= self.precharge_max_usd:
+            if fleet.forecast_min_f(self.precharge_hours) < self.precharge_below_f:
+                precharge_kw = np.clip((self.precharge_soc * cap - energy) / h, 0.0, fleet.max_kw)
+                charge_kw = np.maximum(charge_kw, precharge_kw)
+        if frame.price <= self.charge_at_usd:
+            charge_kw = np.where(energy < cap, np.nan, charge_kw)  # cheap: fill up
+
+        discharge = export_kw > 0
+        charge = ~discharge & fleet.grid & ((charge_kw > 0) | np.isnan(charge_kw))
+        action = np.where(
+            ~fleet.grid, "backup", np.where(discharge, "discharge", np.where(charge, "charge", "hold"))
+        )
+        kw = np.where(discharge, export_kw, np.where(charge, charge_kw, 0.0))
+        return Decisions(action=action, src=np.full(n, "rule"), conf=np.full(n, np.nan), kw=kw)
+
+
+def pro_rata(total: float, weight: np.ndarray, cap: np.ndarray) -> np.ndarray:
+    """Split `total` in proportion to `weight`, no entry above its `cap`; what a capped entry
+    can't take is split among the rest. Sums to less than `total` only when every entry is capped."""
+    share = np.zeros(len(weight))
+    free = weight > 0
+    left = total
+    while free.any() and left > 0:
+        tentative = left * weight[free] / weight[free].sum()
+        over = tentative > cap[free]
+        if not over.any():
+            share[free] = tentative
+            break
+        capped = np.flatnonzero(free)[over]
+        share[capped] = cap[capped]
+        left -= cap[capped].sum()
+        free[capped] = False
+    return share
+
+
+POLICIES: dict[str, Callable[[], Policy]] = {"contract": ContractPolicy, "naive": NaivePolicy}
+"""Policies selectable by name (run_replay `--policy`, the app's `SIMURITOR_POLICY`)."""
