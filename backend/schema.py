@@ -74,8 +74,10 @@ class HomeState(Wire):
 
 
 class FleetStats(Wire):
-    promised_mw: Annotated[float, Field(ge=0)]
-    """Exportable power at tick start: homes on grid, above reserve floor."""
+    available_mw: Annotated[float, Field(ge=0)]
+    """What the fleet could physically export this tick: homes on grid, above reserve floor."""
+    promised_mw: Annotated[float, Field(ge=0)] | None
+    """MW committed ahead of time (e.g. day-ahead); null when no commitment source is configured."""
     delivered_mw: Annotated[float, Field(ge=0)]
     """Actual fleet discharge to the grid this tick."""
     homes_on_grid: Annotated[int, Field(ge=0)]

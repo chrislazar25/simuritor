@@ -70,9 +70,13 @@ export interface HomeState {
 }
 export interface FleetStats {
   /**
-   * Exportable power at tick start: homes on grid, above reserve floor.
+   * What the fleet could physically export this tick: homes on grid, above reserve floor.
    */
-  promised_mw: number;
+  available_mw: number;
+  /**
+   * MW committed ahead of time (e.g. day-ahead); null when no commitment source is configured.
+   */
+  promised_mw: number | null;
   /**
    * Actual fleet discharge to the grid this tick.
    */

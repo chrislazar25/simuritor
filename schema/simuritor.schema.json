@@ -13,10 +13,22 @@
     "FleetStats": {
       "additionalProperties": false,
       "properties": {
-        "promised_mw": {
-          "description": "Exportable power at tick start: homes on grid, above reserve floor.",
+        "available_mw": {
+          "description": "What the fleet could physically export this tick: homes on grid, above reserve floor.",
           "minimum": 0,
           "type": "number"
+        },
+        "promised_mw": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "MW committed ahead of time (e.g. day-ahead); null when no commitment source is configured."
         },
         "delivered_mw": {
           "description": "Actual fleet discharge to the grid this tick.",
@@ -46,6 +58,7 @@
         }
       },
       "required": [
+        "available_mw",
         "promised_mw",
         "delivered_mw",
         "homes_on_grid",
