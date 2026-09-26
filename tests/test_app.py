@@ -40,7 +40,7 @@ def test_ws_play_streams_ticks_and_reset_resends_init(client: TestClient) -> Non
     with client.websocket_connect("/ws") as ws:
         init = receive(ws)
         assert isinstance(init, InitMessage)
-        assert init.n_ticks == 672 and len(init.homes) == 500
+        assert init.n_ticks == 960 and len(init.homes) == 500
 
         ws.send_text(SpeedMessage(ticks_per_sec=64).model_dump_json())
         ws.send_text(PlayMessage().model_dump_json())

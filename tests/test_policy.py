@@ -21,14 +21,18 @@ def view(
     reserve_kwh: list[float] | None = None,
     promised_mw: float | None = None,
     ticks_left: int = 1,
+    contract_mw: float | None = None,
     forecast_f: float = 50.0,
 ) -> FleetView:
     """40 kWh homes, 12 kW max, a 5% reserve floor so the contract reserve is what binds.
 
-    `promised_mw` set: a utility call with a 20% buffer. `forecast_f`: the coldest forecast temperature, any horizon.
+    `promised_mw` set: a utility call with a 20% buffer. `contract_mw`: what the next call (6 ticks)
+    asks for; defaults to the promise, or 0 outside a call. `forecast_f`: the coldest forecast, any horizon.
     """
     n = len(soc)
     call = promised_mw is not None
+    if contract_mw is None:
+        contract_mw = promised_mw or 0.0
     return FleetView(
         soc=np.array(soc),
         grid=np.array(grid or [True] * n),
@@ -42,6 +46,8 @@ def view(
             call=call,
             promised_mw=promised_mw or 0.0,
             ticks_left=ticks_left if call else 0,
+            contract_mw=contract_mw,
+            max_call_ticks=6,
             buffer_frac=0.2,
             capacity_usd=0.0,
         ),
@@ -130,16 +136,34 @@ def test_buffer_is_held_in_power() -> None:
     assert kw == pytest.approx([5.0 + 6.0])
 
 
-def test_buffer_is_held_in_energy_for_the_rest_of_the_call() -> None:
-    """10 kWh above reserve, a 4 kW share for 6 more ticks: (4 + 0.8) kW x 1.5 h = 7.2 kWh held.
+def test_buffer_is_held_in_energy_for_this_call_and_the_next() -> None:
+    """10 kWh above reserve, a 4 kW share: (4 + 0.8) kW x 0.25 h = 1.2 kWh held per call tick.
 
-    That leaves 2.8 kWh, i.e. 11.2 kW this tick, but power allows only 12 - 4.8 = 7.2 kW: 4 + 7.2.
-    With 8 ticks left, 9.6 kWh is held: 0.4 kWh = 1.6 kW of headroom export.
+    Last tick of the call: 1 + 6 (the next call) ticks = 8.4 kWh held. That leaves 1.6 kWh, i.e.
+    6.4 kW this tick (power would allow 12 - 4.8 = 7.2): 4 + 6.4. With 2 ticks left, 8 ticks =
+    9.6 kWh is held: 0.4 kWh = 1.6 kW of headroom export.
     """
-    fleet = view([0.5], reserve_kwh=[10], promised_mw=0.004, ticks_left=6)
-    assert contract(price=1000, fleet=fleet)[1] == pytest.approx([4.0 + 7.2])
-    fleet = view([0.5], reserve_kwh=[10], promised_mw=0.004, ticks_left=8)
+    fleet = view([0.5], reserve_kwh=[10], promised_mw=0.004, ticks_left=1)
+    assert contract(price=1000, fleet=fleet)[1] == pytest.approx([4.0 + 6.4])
+    fleet = view([0.5], reserve_kwh=[10], promised_mw=0.004, ticks_left=2)
     assert contract(price=1000, fleet=fleet)[1] == pytest.approx([4.0 + 1.6])
+
+
+def test_outside_a_call_headroom_keeps_the_next_calls_energy() -> None:
+    """No call (a cooldown, say), 10 kWh above reserve. A 4 kW contract: the next call needs
+    4 x 1.2 x 1.5 h = 7.2 kWh, so 2.8 kWh (11.2 kW) is sellable. An 8 kW contract needs 14.4: hold.
+    """
+    action, kw = contract(price=1000, fleet=view([0.5], reserve_kwh=[10], contract_mw=0.004))
+    assert action == ["discharge"] and kw == pytest.approx([11.2])
+    action, kw = contract(price=1000, fleet=view([0.5], reserve_kwh=[10], contract_mw=0.008))
+    assert action == ["hold"] and kw == [0.0]
+
+
+def test_the_next_calls_energy_is_split_pro_rata() -> None:
+    """20 and 10 kWh above reserve, a 12 kW contract: next-call shares 8 and 4 kW, kept for 1.5 h
+    with the buffer: 14.4 and 7.2 kWh. Sellable: 5.6 and 2.8 kWh, capped at 12 kW."""
+    _, kw = contract(price=1000, fleet=view([0.55, 0.5], reserve_kwh=[2, 10], contract_mw=0.012))
+    assert kw == pytest.approx([12.0, 11.2])
 
 
 def test_fleet_buffer_is_buffer_frac_of_the_promise() -> None:

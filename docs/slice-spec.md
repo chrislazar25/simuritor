@@ -16,7 +16,7 @@ Jev, confidence gate, circuit breaker, chaos injection, policy comparison, day-a
 ## Defaults (change if you disagree — marked ⚠ = assumption, say so in README)
 | Thing | Default |
 |---|---|
-| Replay window | Feb 13 00:00 → Feb 20 00:00 (672 ticks). Full Feb 10–21 available. |
+| Replay window | Feb 10 00:00 → Feb 20 00:00 (960 ticks; was Feb 13, moved so pre-charge and the pre-storm window run). Full Feb 10–21 available. |
 | Tick | one 15-min ERCOT interval; default speed 8 ticks/sec (~85 s full replay) |
 | Fleet size | 500 tonight, scale to 2,000+ Saturday |
 | Home location | random points inside Austin (bbox ≈ lat 30.15–30.45, lon −97.90 to −97.60), seeded |

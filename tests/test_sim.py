@@ -9,7 +9,7 @@ import pytest
 from backend.commitment import UtilityContract
 from backend.data import TZ, Frame
 from backend.faults import OUTAGE_END, OUTAGE_START
-from backend.policy import Decisions, FleetView
+from backend.policy import ContractPolicy, Decisions, FleetView
 from backend.sim import Fleet, FleetConfig, Sim, TickResult, forecast_min_f, read_only, uri_replay
 
 FLOOR = FleetConfig().reserve_floor
@@ -306,6 +306,15 @@ def test_fleet_stats_agree_with_homes(replay: list[TickResult]) -> None:
     assert replay[-1].revenue_usd == pytest.approx(sum(r.revenue_tick_usd for r in replay))
 
 
+def test_precharge_fills_the_fleet_before_the_storm(replay: list[TickResult]) -> None:
+    """Feb 10-12 has a sub-32 °F forecast and prices ≤ $200 to charge at; from Feb 13 it's ≥ $700."""
+    without = uri_replay(seed=0)
+    without.policy = ContractPolicy(precharge=False)
+    at_13 = next(r for r in replay if r.frame.t == ct(13))
+    without_at_13 = next(r for r in run(without) if r.frame.t == ct(13))
+    assert at_13.soc.mean() > 0.9 and without_at_13.soc.mean() < 0.6
+
+
 @pytest.fixture(scope="module")
 def naive_replay() -> list[TickResult]:
     """The naive baseline, on the market alone (no utility contract)."""
@@ -317,22 +326,24 @@ def test_naive_baseline_sells_the_reserve_then_buys_it_back_at_crisis_prices(
 ) -> None:
     """The naive policy's story on real Uri prices (docs/notes.md, "Data findings").
 
-    Prices sit above $1,000 from Feb 13 and never reach $30 until Feb 19. The fleet exports
-    down to the floor on Feb 13, then the recovery rule refills homes back from each rotation
-    at ~$9,000/MWh, so the replay ends deep in the red. Never-restored homes go dark within hours.
+    It fills up at ≤ $30 on Feb 10, then sells down to the floor on the first spike on Feb 11,
+    two days before prices sit above $1,000 for good (Feb 13; they never reach $30 again until
+    Feb 19). The recovery rule then refills homes back from each rotation at ~$9,000/MWh, so the
+    replay ends deep in the red. Never-restored homes go dark within hours.
     (At 12 kW one recovery charge overshoots floor + 10%, so a few homes resell a sliver of it.)
     """
     replay = naive_replay
     earned = [r for r in replay if r.revenue_tick_usd > 0]
     assert earned and all(r.frame.price >= 1000 for r in earned)
-    late = sum(r.revenue_tick_usd for r in earned if r.frame.t >= ct(14))
-    assert late < 0.05 * sum(r.revenue_tick_usd for r in earned)  # nearly everything is sold on Feb 13
+    late = sum(r.revenue_tick_usd for r in earned if r.frame.t >= ct(12))
+    assert late < 0.05 * sum(r.revenue_tick_usd for r in earned)  # nearly everything is sold on Feb 11
+    assert all(r.delivered_mw == 0 for r in replay if ct(12) <= r.frame.t < ct(15))  # nothing left to sell
     assert all(r.delivered_mw == 0 for r in replay if ct(16) <= r.frame.t < OUTAGE_END)
 
-    end_of_13 = next(r for r in replay if r.frame.t == ct(14)).revenue_usd
+    end_of_11 = next(r for r in replay if r.frame.t == ct(12)).revenue_usd
     end_of_outage = next(r for r in replay if r.frame.t == OUTAGE_END).revenue_usd
-    assert end_of_13 > 0 > end_of_outage
-    assert all(r.frame.price >= 1000 for r in replay if r.revenue_tick_usd < 0 and r.frame.t < ct(19))
+    assert end_of_11 > 0 > end_of_outage
+    assert all(r.frame.price >= 1000 for r in replay if r.revenue_tick_usd < 0 and ct(12) <= r.frame.t < ct(19))
 
     sim = uri_replay(seed=0)
     never_restored = (sim.faults[0].group < 0) & (fleet.tier != "none")  # `none` keeps its energy

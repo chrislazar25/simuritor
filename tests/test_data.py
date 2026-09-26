@@ -55,9 +55,9 @@ def at(frames: list[Frame], t: datetime) -> Frame:
 
 
 def test_frames_cover_the_default_window(frames: list[Frame]) -> None:
-    assert len(frames) == 672
-    assert [f.i for f in frames] == list(range(672))
-    assert frames[0].t == ct("13")
+    assert len(frames) == 960
+    assert [f.i for f in frames] == list(range(960))
+    assert frames[0].t == ct("10") and frames[-1].t == ct("19", "23:45")
     assert all(b.t - a.t == TICK for a, b in pairwise(frames))
     assert all(f.t.tzinfo is TZ for f in frames)
     assert not any(math.isnan(f.price) or math.isnan(f.temp_f) for f in frames)

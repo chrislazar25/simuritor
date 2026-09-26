@@ -20,7 +20,7 @@ def messages() -> tuple[InitMessage, list[TickMessage]]:
 
 def test_init_describes_the_replay(messages: tuple[InitMessage, list[TickMessage]]) -> None:
     init, ticks = messages
-    assert init.n_ticks == len(ticks) == 672
+    assert init.n_ticks == len(ticks) == 960
     assert init.start == ticks[0].t and init.end == ticks[-1].t + TICK
     assert len({h.id for h in init.homes}) == len(init.homes) == 500
     assert all(h.tier == "critical" for h in init.homes if h.household == "medical")

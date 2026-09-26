@@ -36,7 +36,7 @@ def test_commitment_during_a_call() -> None:
     owed = [contract.commit(at(9000)) for _ in range(7)]
     assert [c.promised_mw for c in owed] == pytest.approx([3.6] * 6 + [0.0])  # 60% of 6 MW, then cooldown
     assert [c.ticks_left for c in owed] == [6, 5, 4, 3, 2, 1, 0]
-    assert all(c.buffer_frac == 0.2 for c in owed)
+    assert all(c.buffer_frac == 0.2 and c.contract_mw == pytest.approx(3.6) and c.max_call_ticks == 6 for c in owed)
 
 
 def test_capacity_payment_every_tick_called_or_not() -> None:

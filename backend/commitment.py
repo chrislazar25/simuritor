@@ -23,6 +23,10 @@ class Commitment:
     """MW to deliver this tick; 0 outside calls."""
     ticks_left: int
     """Call ticks still to come, this one included, if the call runs to its limit; 0 outside calls."""
+    contract_mw: float
+    """What the next call will ask for, called or not."""
+    max_call_ticks: int
+    """The longest a call can run."""
     buffer_frac: float
     """Spare each home keeps on top of its call share, as a fraction of the share, for failover."""
     capacity_usd: float
@@ -69,7 +73,13 @@ class UtilityContract:
     def commit(self, frame: Frame) -> Commitment:
         capacity_usd = self.capacity_usd_per_mw_week * self.size_mw * HOURS_PER_TICK / HOURS_PER_WEEK
         idle = Commitment(
-            call=False, promised_mw=0.0, ticks_left=0, buffer_frac=self.buffer_frac, capacity_usd=capacity_usd
+            call=False,
+            promised_mw=0.0,
+            ticks_left=0,
+            contract_mw=self.size_mw,
+            max_call_ticks=self.max_call_ticks,
+            buffer_frac=self.buffer_frac,
+            capacity_usd=capacity_usd,
         )
         if self._cooldown:
             self._cooldown -= 1
@@ -86,6 +96,8 @@ class UtilityContract:
             call=True,
             promised_mw=self.size_mw,
             ticks_left=ticks_left,
+            contract_mw=self.size_mw,
+            max_call_ticks=self.max_call_ticks,
             buffer_frac=self.buffer_frac,
             capacity_usd=capacity_usd,
         )

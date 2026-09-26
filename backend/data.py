@@ -74,7 +74,8 @@ class UriParquetSource:
     LOCATION = "LZ_AEN"
     LOCATION_TYPE = "Load Zone"
 
-    DEFAULT_START = datetime(2021, 2, 13, tzinfo=TZ)
+    DEFAULT_START = datetime(2021, 2, 10, tzinfo=TZ)
+    """Three pre-storm days before prices spike on Feb 13 (the insight experiment compares them)."""
     DEFAULT_END = datetime(2021, 2, 20, tzinfo=TZ)
 
     def __init__(self, data_dir: Path = DATA_DIR) -> None:
