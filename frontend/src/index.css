@@ -18,8 +18,6 @@
   --font-ui: 'Inter Tight', system-ui, sans-serif;
   --font-num: 'JetBrains Mono', ui-monospace, monospace;
 
-  --panel-width: 320px;
-
   color-scheme: dark;
 }
 
@@ -34,21 +32,51 @@ body {
   font-family: var(--font-ui);
 }
 
+/* The map fills the viewport; every instrument floats over it (docs/design.md, "The HUD"). */
 .app {
-  display: grid;
-  grid-template-columns: 1fr var(--panel-width);
-  grid-template-rows: auto 1fr;
   height: 100vh;
 }
 
+.map {
+  position: fixed;
+  inset: 0;
+}
+
+/* Two classes, so this beats MapLibre's own `.maplibregl-map { position: relative }`. */
+.map .map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* Glass look shared by the top bar and the floating panels. */
+.topbar,
+.floating {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--surface) 60%, transparent);
+}
+
+/* Fixed, not draggable. Panels stack above it, so a panel dragged over it can still be grabbed. */
 .topbar {
-  grid-column: 1 / -1;
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  z-index: 5;
   display: flex;
-  align-items: baseline;
-  gap: 24px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-raised);
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px 8px 16px;
+  overflow-x: auto;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.topbar > * {
+  flex: none;
 }
 
 .brand {
@@ -62,27 +90,30 @@ body {
   color: var(--muted);
 }
 
-.map {
-  position: relative;
-  min-height: 0;
+/* Widths in ch fit each readout's longest value, so ticking never shifts the bar. */
+.clock {
+  width: 19ch; /* Mon Feb 15 02:00 CT */
 }
 
-/* Two classes, so this beats MapLibre's own `.maplibregl-map { position: relative }`. */
-.map .map-canvas {
-  position: absolute;
-  inset: 0;
+.price {
+  width: 13ch; /* $9,000.00/MWh */
+  text-align: right;
 }
 
-.panel {
-  border-left: 1px solid var(--border);
+.temp {
+  width: 5ch; /* -10°F */
+  text-align: right;
 }
 
 .status {
+  width: 14ch; /* ws: connecting */
   font-size: 12px;
 }
 
 .eea {
+  width: calc(6ch + 18px); /* Normal */
   padding: 1px 8px;
+  text-align: center;
   border: 1px solid var(--border);
   border-radius: 4px;
   font-family: var(--font-num);
@@ -102,11 +133,16 @@ body {
 }
 
 .call {
+  visibility: hidden;
   padding: 1px 8px;
   border: 1px solid var(--state-export);
   border-radius: 4px;
   color: var(--state-export);
   font-size: 13px;
+}
+
+.call[data-active='true'] {
+  visibility: visible;
 }
 
 .controls {
@@ -115,7 +151,7 @@ body {
   margin-left: auto;
 }
 
-.controls button {
+.topbar button {
   min-width: 56px;
   padding: 3px 8px;
   border: 1px solid var(--border);
@@ -126,13 +162,26 @@ body {
   cursor: pointer;
 }
 
-.controls button:disabled {
+.topbar button:disabled {
   color: var(--muted);
   cursor: default;
 }
 
 .speeds {
   display: flex;
+}
+
+/* Fixed widths, so the labels can flip (Play/Pause, Hide/Show) without moving anything. */
+.topbar .play {
+  width: 64px;
+}
+
+.topbar .hide-panels {
+  width: 100px;
+}
+
+.hide-panels[aria-pressed='true'] {
+  border-color: var(--accent);
 }
 
 .speeds button {
@@ -153,7 +202,8 @@ body {
   display: grid;
   gap: 6px;
   margin: 0;
-  padding: 16px;
+  padding: 4px 8px;
+  font-size: 14px;
 }
 
 .counters div {
@@ -215,12 +265,6 @@ body {
   z-index: 10;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--surface) 60%, transparent);
   overflow: hidden;
 }
 
@@ -337,18 +381,4 @@ body {
     var(--muted) 76% 83%,
     transparent 83%
   );
-}
-
-/* Narrow screens: panels stack under the map. */
-@media (max-width: 800px) {
-  .app {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(50vh, 1fr) auto;
-    height: auto;
-  }
-
-  .panel {
-    border-left: none;
-    border-top: 1px solid var(--border);
-  }
 }

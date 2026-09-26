@@ -88,8 +88,8 @@ One function maps wire data to a visual state; every renderer and theme consumes
 └────────────────────────────────────────────┴─────────────────┘
 ```
 - Map takes the most space and never shifts; panels have fixed widths so ticking numbers don't reflow the layout.
-- Instruments sit beside the map, not on top of it, tonight. A later theme may float them over the map as a HUD.
-- Narrow screens: panels stack under the map. Not a priority; the demo is desktop.
+- Superseded by the HUD (Locked direction): the map fills the viewport and every instrument floats over it. A fixed glass top bar; draggable glass panels (failovers top-left, counters top-right, chart bottom-left by default); "Hide panels" (button or H) leaves only the top bar.
+- Narrow screens: not a priority; the demo is desktop. The top bar scrolls sideways if it doesn't fit.
 
 ## Theming seams (what keeps it swappable)
 1. **Semantic tokens** as CSS variables: `--surface`, `--text`, `--muted`, `--accent`, `--state-grid`, `--state-export`, `--state-backup`, `--state-dark`, `--grid-off`, `--font-ui`, `--font-num`. Components use only these names; a theme is one block of values under `[data-theme="…"]`.

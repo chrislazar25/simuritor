@@ -29,11 +29,11 @@ export function Controls({ connected, playing, finished, send }: Props) {
   return (
     <div className="controls">
       {playing ? (
-        <button type="button" onClick={() => send({ type: 'pause' })}>
+        <button type="button" className="play" onClick={() => send({ type: 'pause' })}>
           Pause
         </button>
       ) : (
-        <button type="button" onClick={play} disabled={!connected || finished}>
+        <button type="button" className="play" onClick={play} disabled={!connected || finished}>
           Play
         </button>
       )}
