@@ -61,6 +61,17 @@ body {
   color: var(--muted);
 }
 
+.map {
+  position: relative;
+  min-height: 0;
+}
+
+/* Two classes, so this beats MapLibre's own `.maplibregl-map { position: relative }`. */
+.map .map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
 .panel {
   display: grid;
   grid-template-rows: auto 1fr;
@@ -161,7 +172,7 @@ body {
   border-radius: 50%;
 }
 
-/* Placeholder look until the map and chart land. */
+/* Placeholder look until the chart lands. */
 .slot {
   display: grid;
   place-items: center;

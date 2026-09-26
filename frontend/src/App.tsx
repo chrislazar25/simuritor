@@ -1,6 +1,7 @@
 import { Controls } from './Controls.tsx'
 import { Counters } from './Counters.tsx'
 import { formatClock, formatPrice } from './format.ts'
+import { FleetMap } from './Map.tsx'
 import { useTicks } from './useTicks.ts'
 
 // Layout from docs/design.md: top bar, map (the scene), right panel with counters and chart slots.
@@ -24,7 +25,9 @@ export default function App() {
         <Controls connected={status === 'open'} playing={playing} finished={finished} send={send} />
         <span className="readout status">ws: {status}</span>
       </header>
-      <main className="map slot">map</main>
+      <main className="map">
+        <FleetMap init={init} tick={tick} />
+      </main>
       <aside className="panel">
         <Counters fleet={tick?.fleet ?? null} />
         <section className="slot">chart</section>
