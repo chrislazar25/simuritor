@@ -5,7 +5,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useRef, useState } from 'react'
 import { type HomeVisual, homeVisual } from './homeVisual.ts'
 import { cssVar } from './tokens.ts'
-import type { InitMessage, TickMessage } from './types.ts'
+import type { HomeState, InitMessage, TickMessage } from './types.ts'
 
 const BASEMAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
 const AUSTIN: [number, number] = [-97.75, 30.3]
@@ -17,14 +17,18 @@ setWorkerUrl(workerUrl)
 
 /** One point per home with its visual state. Before the first tick every home shows as on grid. */
 function homesGeoJSON(init: InitMessage, tick: TickMessage | null): FeatureCollection {
-  const visual = new Map<string, HomeVisual>(tick?.homes.map((h) => [h.id, homeVisual(h)]))
+  const state = new Map<string, HomeState>(tick?.homes.map((h) => [h.id, h]))
   return {
     type: 'FeatureCollection',
-    features: init.homes.map((h) => ({
-      type: 'Feature',
-      geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
-      properties: { id: h.id, visual: visual.get(h.id) ?? 'grid' },
-    })),
+    features: init.homes.map((h) => {
+      const s = state.get(h.id)
+      const visual: HomeVisual = s ? homeVisual(s, h.tier) : 'grid'
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+        properties: { id: h.id, visual },
+      }
+    }),
   }
 }
 
@@ -42,7 +46,7 @@ export function FleetMap({ init, tick }: { init: InitMessage | null; tick: TickM
     map.current = m
     m.on('load', () => {
       // State colours come from the CSS tokens, so the map and the rest of the UI share one palette.
-      const colour = (visual: HomeVisual) => cssVar(`--state-${visual}`)
+      const colour = (token: string) => cssVar(`--state-${token}`)
       m.addSource(SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
       m.addLayer({
         id: SOURCE,
@@ -59,12 +63,24 @@ export function FleetMap({ init, tick }: { init: InitMessage | null; tick: TickM
             colour('backup'),
             'dark',
             colour('dark'),
+            'dark_contract',
+            colour('dark-contract'),
             colour('grid'),
           ],
-          // Dark is hollow as well as grey, so it doesn't rely on colour alone.
-          'circle-opacity': ['match', ['get', 'visual'], 'dark', 0, 1],
-          'circle-stroke-width': ['match', ['get', 'visual'], 'dark', 1.5, 0.5],
-          'circle-stroke-color': ['match', ['get', 'visual'], 'dark', colour('dark'), cssVar('--surface')],
+          // Both darks are hollow as well as grey, so they don't rely on colour alone; dark by
+          // contract has the thinner, fainter ring.
+          'circle-opacity': ['match', ['get', 'visual'], ['dark', 'dark_contract'], 0, 1],
+          'circle-stroke-width': ['match', ['get', 'visual'], 'dark', 1.5, 'dark_contract', 1, 0.5],
+          'circle-stroke-opacity': ['match', ['get', 'visual'], 'dark_contract', 0.7, 1],
+          'circle-stroke-color': [
+            'match',
+            ['get', 'visual'],
+            'dark',
+            colour('dark'),
+            'dark_contract',
+            colour('dark-contract'),
+            cssVar('--surface'),
+          ],
         },
       })
       setLoaded(true)

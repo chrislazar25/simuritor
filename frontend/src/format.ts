@@ -34,3 +34,15 @@ export function formatUsd(usd: number): string {
 export function formatPrice(usdPerMwh: number): string {
   return `${usdPerMwh.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}/MWh`
 }
+
+const pctFormat = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 1 })
+
+/** "99.2%" from a 0–1 fraction. */
+export function formatPct(fraction: number): string {
+  return pctFormat.format(fraction)
+}
+
+/** "12.3 MWh" */
+export function formatMwh(mwh: number): string {
+  return `${mwh.toFixed(1)} MWh`
+}

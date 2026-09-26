@@ -12,6 +12,7 @@
   --state-export: #048ee5;
   --state-backup: #f7c33c;
   --state-dark: #54524f;
+  --state-dark-contract: #42413f;
   --grid-off: #bf5249;
 
   --font-ui: 'Inter Tight', system-ui, sans-serif;
@@ -100,6 +101,14 @@ body {
   color: var(--text);
 }
 
+.call {
+  padding: 1px 8px;
+  border: 1px solid var(--state-export);
+  border-radius: 4px;
+  color: var(--state-export);
+  font-size: 13px;
+}
+
 .controls {
   display: flex;
   gap: 8px;
@@ -156,14 +165,48 @@ body {
   margin: 0;
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
+.counters .metrics-start {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.counters .sub {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Same look as the map dots: filled for powered homes, hollow rings for the two darks. */
 .swatch {
   display: inline-block;
   width: 10px;
   height: 10px;
   margin-right: 8px;
   border-radius: 50%;
+}
+
+.swatch[data-visual='grid'] {
+  background: var(--state-grid);
+}
+
+.swatch[data-visual='export'] {
+  background: var(--state-export);
+}
+
+.swatch[data-visual='backup'] {
+  background: var(--state-backup);
+}
+
+.swatch[data-visual='dark'] {
+  border: 2px solid var(--state-dark);
+}
+
+.swatch[data-visual='dark-contract'] {
+  border: 1.5px solid var(--state-dark-contract);
 }
 
 /* Glass HUD panel over the map (FloatingPanel.tsx). Above MapLibre's controls. */

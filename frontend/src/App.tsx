@@ -24,6 +24,8 @@ export default function App() {
         <span className="readout">
           tick {tick ? tick.i + 1 : 0}/{init?.n_ticks ?? '–'}
         </span>
+        {/* Last of the left-hand readouts, so nothing shifts when a call starts or ends. */}
+        {tick?.fleet.utility_call && <span className="call">Utility call</span>}
         <Controls connected={status === 'open'} playing={playing} finished={finished} send={send} />
         <span className="readout status">ws: {status}</span>
       </header>

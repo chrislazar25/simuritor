@@ -1,4 +1,14 @@
-import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { formatDay } from './format.ts'
 import { cssVar } from './tokens.ts'
 import type { InitMessage } from './types.ts'
@@ -11,8 +21,18 @@ const SELL_AT_USD = 1000 // NaivePolicy.discharge_at_usd in backend/policy.py
 const OUTAGE_START = '2021-02-15T02:00:00-06:00' // OUTAGE_START in backend/faults.py
 
 /**
- * Price, available MW and delivered MW over the ticks so far, on two y-axes. The x-axis spans
- * the whole replay from the start, so the lines fill left to right as it plays.
+ * The band between delivered and promised MW where delivery fell short; zero height elsewhere, so
+ * only shortfalls show. Null (no band) when no contract is configured.
+ */
+function shortfall(p: TickPoint): [number, number] | null {
+  if (p.promised_mw === null) return null
+  return [p.delivered_mw, Math.max(p.delivered_mw, p.promised_mw)]
+}
+
+/**
+ * Price, and promised and delivered MW over the ticks so far, on two y-axes, with
+ * shortfalls (delivered < promised) shaded red. The x-axis spans the whole replay from the
+ * start, so the lines fill left to right as it plays.
  */
 export function Charts({ init, history }: { init: InitMessage | null; history: TickPoint[] }) {
   if (!init) return null
@@ -22,10 +42,12 @@ export function Charts({ init, history }: { init: InitMessage | null; history: T
   const muted = cssVar('--muted')
   const exportColour = cssVar('--state-export')
   const marker = { fill: muted, fontSize: 10 }
+  // promised_mw is null throughout when no contract is configured: leave its series off the legend.
+  const hasContract = history.some((p) => p.promised_mw !== null)
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={history} margin={{ top: 8, right: 0, bottom: 0, left: 0 }}>
+      <ComposedChart data={history} margin={{ top: 8, right: 0, bottom: 0, left: 0 }}>
         <CartesianGrid stroke={cssVar('--border')} vertical={false} />
         <XAxis
           dataKey="i"
@@ -54,6 +76,17 @@ export function Charts({ init, history }: { init: InitMessage | null; history: T
           stroke={cssVar('--grid-off')}
           label={{ ...marker, value: 'outages', position: 'insideTopRight' }}
         />
+        {hasContract && (
+          <Area
+            yAxisId="mw"
+            dataKey={shortfall}
+            name="Shortfall"
+            stroke="none"
+            fill={cssVar('--grid-off')}
+            fillOpacity={0.4}
+            isAnimationActive={false}
+          />
+        )}
         <Line
           yAxisId="price"
           dataKey="price"
@@ -63,16 +96,18 @@ export function Charts({ init, history }: { init: InitMessage | null; history: T
           strokeWidth={1}
           isAnimationActive={false}
         />
-        <Line
-          yAxisId="mw"
-          dataKey="available_mw"
-          name="Available MW"
-          stroke={exportColour}
-          strokeDasharray="3 3"
-          dot={false}
-          strokeWidth={1}
-          isAnimationActive={false}
-        />
+        {hasContract && (
+          <Line
+            yAxisId="mw"
+            dataKey="promised_mw"
+            name="Promised MW"
+            stroke={cssVar('--text')}
+            strokeDasharray="6 3"
+            dot={false}
+            strokeWidth={1.5}
+            isAnimationActive={false}
+          />
+        )}
         <Line
           yAxisId="mw"
           dataKey="delivered_mw"
@@ -82,7 +117,7 @@ export function Charts({ init, history }: { init: InitMessage | null; history: T
           strokeWidth={1.5}
           isAnimationActive={false}
         />
-      </LineChart>
+      </ComposedChart>
     </ResponsiveContainer>
   )
 }
