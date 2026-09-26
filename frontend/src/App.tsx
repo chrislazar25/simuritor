@@ -1,11 +1,12 @@
 import { Charts } from './Charts.tsx'
 import { Controls } from './Controls.tsx'
 import { Counters } from './Counters.tsx'
+import { FloatingPanel } from './FloatingPanel.tsx'
 import { formatClock, formatPrice } from './format.ts'
 import { FleetMap } from './Map.tsx'
 import { useTicks } from './useTicks.ts'
 
-// Layout from docs/design.md: top bar, map (the scene), right panel with counters and chart.
+// Layout from docs/design.md: top bar, map (the scene), right panel with counters, chart floating over the map.
 export default function App() {
   const { status, init, tick, history, playing, send } = useTicks()
   const finished = init !== null && tick?.i === init.n_ticks - 1
@@ -31,10 +32,10 @@ export default function App() {
       </main>
       <aside className="panel">
         <Counters fleet={tick?.fleet ?? null} />
-        <section className="chart">
-          <Charts init={init} history={history} />
-        </section>
       </aside>
+      <FloatingPanel title="Price · fleet MW" storageKey="simuritor.chart-panel" initialSize={{ w: 520, h: 300 }}>
+        <Charts init={init} history={history} />
+      </FloatingPanel>
     </div>
   )
 }

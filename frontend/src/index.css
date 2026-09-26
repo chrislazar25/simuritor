@@ -73,13 +73,7 @@ body {
 }
 
 .panel {
-  display: grid;
-  grid-template-rows: auto 1fr;
   border-left: 1px solid var(--border);
-}
-
-.panel > * + * {
-  border-top: 1px solid var(--border);
 }
 
 .status {
@@ -172,9 +166,82 @@ body {
   border-radius: 50%;
 }
 
-.chart {
-  min-height: 240px;
-  padding: 12px 8px 8px;
+/* Glass HUD panel over the map (FloatingPanel.tsx). Above MapLibre's controls. */
+.floating {
+  position: fixed;
+  z-index: 10;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--surface) 60%, transparent);
+  overflow: hidden;
+}
+
+.floating.expanded {
+  top: 15vh;
+  left: 15vw;
+  width: 70vw;
+  height: 70vh;
+}
+
+.floating-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.floating-header:active {
+  cursor: grabbing;
+}
+
+.floating.expanded .floating-header {
+  cursor: default;
+}
+
+.floating-header button {
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.floating-header button:hover {
+  color: var(--text);
+}
+
+.floating-body {
+  padding: 8px 8px 4px;
+}
+
+.floating-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(
+    135deg,
+    transparent 55%,
+    var(--muted) 55% 62%,
+    transparent 62% 76%,
+    var(--muted) 76% 83%,
+    transparent 83%
+  );
 }
 
 /* Narrow screens: panels stack under the map. */
