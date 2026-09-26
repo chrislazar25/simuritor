@@ -1,0 +1,199 @@
+{
+  "type": "tick",
+  "i": 212,
+  "t": "2021-02-15T05:00:00-06:00",
+  "price": 9618.52,
+  "eea": "EEA3",
+  "temp_f": 12.6,
+  "homes": [
+    {
+      "id": "h0001",
+      "soc": 0.88,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0002",
+      "soc": 0.74,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0003",
+      "soc": 0.66,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0004",
+      "soc": 0.61,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0005",
+      "soc": 0.57,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0006",
+      "soc": 0.52,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0007",
+      "soc": 0.47,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0008",
+      "soc": 0.43,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0009",
+      "soc": 0.38,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0010",
+      "soc": 0.34,
+      "grid": true,
+      "action": "discharge",
+      "kw": 10.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0011",
+      "soc": 0.27,
+      "grid": true,
+      "action": "hold",
+      "kw": 0.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0012",
+      "soc": 0.21,
+      "grid": true,
+      "action": "hold",
+      "kw": 0.0,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0013",
+      "soc": 0.71,
+      "grid": false,
+      "action": "backup",
+      "kw": 7.31,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0014",
+      "soc": 0.63,
+      "grid": false,
+      "action": "backup",
+      "kw": 6.96,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0015",
+      "soc": 0.55,
+      "grid": false,
+      "action": "backup",
+      "kw": 8.05,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0016",
+      "soc": 0.44,
+      "grid": false,
+      "action": "backup",
+      "kw": 8.35,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0017",
+      "soc": 0.36,
+      "grid": false,
+      "action": "backup",
+      "kw": 7.01,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0018",
+      "soc": 0.29,
+      "grid": false,
+      "action": "backup",
+      "kw": 7.55,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0019",
+      "soc": 0.12,
+      "grid": false,
+      "action": "backup",
+      "kw": 5.84,
+      "src": "rule",
+      "conf": null
+    },
+    {
+      "id": "h0020",
+      "soc": 0.0,
+      "grid": false,
+      "action": "hold",
+      "kw": 0.0,
+      "src": "rule",
+      "conf": null
+    }
+  ],
+  "fleet": {
+    "promised_mw": 0.108,
+    "delivered_mw": 0.1,
+    "homes_on_grid": 12,
+    "homes_on_battery": 7,
+    "homes_dark": 1,
+    "revenue_usd": 2084.21,
+    "revenue_tick_usd": 240.46
+  }
+}

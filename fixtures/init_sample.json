@@ -1,0 +1,148 @@
+{
+  "type": "init",
+  "start": "2021-02-13T00:00:00-06:00",
+  "end": "2021-02-20T00:00:00-06:00",
+  "n_ticks": 672,
+  "homes": [
+    {
+      "id": "h0001",
+      "lat": 30.19328,
+      "lon": -97.86466,
+      "household": "elderly",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0002",
+      "lat": 30.24254,
+      "lon": -97.65516,
+      "household": "medical",
+      "capacity_kwh": 39.2
+    },
+    {
+      "id": "h0003",
+      "lat": 30.20422,
+      "lon": -97.72552,
+      "household": "standard",
+      "capacity_kwh": 39.2
+    },
+    {
+      "id": "h0004",
+      "lat": 30.34167,
+      "lon": -97.78828,
+      "household": "wfh",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0005",
+      "lat": 30.31432,
+      "lon": -97.88116,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0006",
+      "lat": 30.16788,
+      "lon": -97.83821,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0007",
+      "lat": 30.35412,
+      "lon": -97.77172,
+      "household": "wfh",
+      "capacity_kwh": 39.2
+    },
+    {
+      "id": "h0008",
+      "lat": 30.24424,
+      "lon": -97.72433,
+      "household": "standard",
+      "capacity_kwh": 39.2
+    },
+    {
+      "id": "h0009",
+      "lat": 30.28596,
+      "lon": -97.81007,
+      "household": "medical",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0010",
+      "lat": 30.38831,
+      "lon": -97.6903,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0011",
+      "lat": 30.22323,
+      "lon": -97.72767,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0012",
+      "lat": 30.30756,
+      "lon": -97.63746,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0013",
+      "lat": 30.36883,
+      "lon": -97.81362,
+      "household": "elderly",
+      "capacity_kwh": 39.2
+    },
+    {
+      "id": "h0014",
+      "lat": 30.44405,
+      "lon": -97.86458,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0015",
+      "lat": 30.27544,
+      "lon": -97.67286,
+      "household": "standard",
+      "capacity_kwh": 39.2
+    },
+    {
+      "id": "h0016",
+      "lat": 30.1956,
+      "lon": -97.75331,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0017",
+      "lat": 30.16176,
+      "lon": -97.69954,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    },
+    {
+      "id": "h0018",
+      "lat": 30.37937,
+      "lon": -97.72809,
+      "household": "standard",
+      "capacity_kwh": 39.2
+    },
+    {
+      "id": "h0019",
+      "lat": 30.41264,
+      "lon": -97.80588,
+      "household": "standard",
+      "capacity_kwh": 39.2
+    },
+    {
+      "id": "h0020",
+      "lat": 30.35859,
+      "lon": -97.72169,
+      "household": "standard",
+      "capacity_kwh": 25.0
+    }
+  ]
+}
