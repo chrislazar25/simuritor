@@ -171,8 +171,9 @@ body {
 }
 
 /* 32 px tall; the ::after stretches the hit area to 40 px into the bar's padding (vertically only,
-   so neighbours never overlap). */
-.topbar button {
+   so neighbours never overlap). Panel buttons (.terms) share the look. */
+.topbar button,
+.terms button {
   position: relative;
   min-width: 56px;
   height: 32px;
@@ -188,22 +189,26 @@ body {
   transition-timing-function: ease-out;
 }
 
-.topbar button::after {
+.topbar button::after,
+.terms button::after {
   content: '';
   position: absolute;
   inset: -4px 0;
 }
 
-.topbar button:hover:not(:disabled) {
+.topbar button:hover:not(:disabled),
+.terms button:hover:not(:disabled) {
   border-color: var(--muted);
   background: var(--surface-raised);
 }
 
-.topbar button:active:not(:disabled) {
+.topbar button:active:not(:disabled),
+.terms button:active:not(:disabled) {
   transform: scale(0.96);
 }
 
-.topbar button:disabled {
+.topbar button:disabled,
+.terms button:disabled {
   color: var(--muted);
   cursor: default;
 }
@@ -213,7 +218,8 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-.speeds {
+.speeds,
+.segmented {
   display: flex;
 }
 
@@ -231,32 +237,39 @@ button:focus-visible {
 }
 
 /* A segmented control: square inside, rounded at the ends. */
-.speeds button {
+.speeds button,
+.segmented button {
   min-width: 40px;
   border-radius: 0;
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
 }
 
-.speeds button:first-child {
+.speeds button:first-child,
+.segmented button:first-child {
   border-radius: 6px 0 0 6px;
 }
 
-.speeds button:last-child {
+.speeds button:last-child,
+.segmented button:last-child {
   border-radius: 0 6px 6px 0;
 }
 
-.speeds button + button {
+.speeds button + button,
+.segmented button + button {
   border-left: none;
 }
 
 /* Above its neighbours, so the focus ring isn't hidden under the next segment. */
-.speeds button:focus-visible {
+.speeds button:focus-visible,
+.segmented button:focus-visible {
   z-index: 1;
 }
 
 .speeds button[aria-pressed='true'],
-.speeds button[aria-pressed='true']:hover:not(:disabled) {
+.speeds button[aria-pressed='true']:hover:not(:disabled),
+.segmented button[aria-pressed='true'],
+.segmented button[aria-pressed='true']:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--accent);
 }
@@ -327,6 +340,8 @@ button:focus-visible {
   position: fixed;
   z-index: 10;
   display: grid;
+  /* minmax(0, …) both ways: a long one-line header summary must not widen the panel. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
 }
@@ -356,7 +371,8 @@ button:focus-visible {
 }
 
 /* Header stats squeeze (with an ellipsis) before the title or the expand button do. */
-.failover-summary {
+.failover-summary,
+.panel-summary {
   flex: 1;
   min-width: 0;
   margin-left: 12px;
@@ -399,8 +415,9 @@ button:focus-visible {
   color: var(--text);
 }
 
-/* Content lines up with the header title at 12 px. */
+/* Content lines up with the header title at 12 px, and scrolls when the panel is sized small. */
 .floating-body {
+  overflow-y: auto;
   padding: 8px 12px;
 }
 
@@ -475,15 +492,223 @@ button:focus-visible {
   filter: invert(0.7);
 }
 
+/* Contract terms panel (ContractTerms.tsx): one 32 px row per knob, label left, control right. */
+.terms {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.terms button {
+  min-width: 0;
+  height: 28px;
+  font-size: 13px;
+}
+
+/* Words, not numbers: the segmented control's mono font is for the speed buttons. */
+.terms .segmented button {
+  font-family: var(--font-ui);
+}
+
+.term {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.term-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+/* The draft differs from the running replay here; hover for the running value. */
+.term-changed {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.term-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.term input[type='range'] {
+  width: 112px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.term-value,
+.term-unit {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.term-value {
+  width: 6ch; /* 100%, 24 h, 10/day */
+  text-align: right;
+}
+
+.term input[type='number'] {
+  width: 9ch;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: 13px var(--font-num);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  transition-property: border-color;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.term input[type='number']:hover {
+  border-color: var(--muted);
+}
+
+.term input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A plain switch: a checkbox with a sliding knob. */
+.switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  cursor: pointer;
+  transition-property: background-color, border-color;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition-property: transform, background-color;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.switch:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.switch:checked::before {
+  transform: translateX(14px);
+  background: var(--text);
+}
+
+.terms-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.terms .replay {
+  width: 72px;
+}
+
+.terms .replay[data-primary='true'],
+.terms .replay[data-primary='true']:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.safe-contract {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* Fixed width, so the label can change to "Replaying Uri…" without the button growing. */
+.terms .find-safe {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 160px;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.verdict {
+  margin: 0;
+  line-height: 1.4;
+  text-wrap: pretty;
+}
+
+.terms-error {
+  margin: 4px 0;
+  color: var(--grid-off);
+  line-height: 1.4;
+  text-wrap: pretty;
+}
+
+.counters .secondary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  /* The label already says it's working. */
+  .spinner {
+    animation: none;
+  }
+
+  .switch,
+  .switch::before,
+  .term input[type='number'],
   .topbar button,
+  .terms button,
   .eea,
   .call,
   .floating-header button {
     transition-duration: 0s;
   }
 
-  .topbar button:active:not(:disabled) {
+  .topbar button:active:not(:disabled),
+  .terms button:active:not(:disabled) {
     transform: none;
   }
 }

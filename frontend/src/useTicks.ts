@@ -12,6 +12,8 @@ export type LoggedFailover = FailoverEvent & { t: string; seq: number }
 /** How many failovers the log keeps. */
 export const FAILOVER_LOG_SIZE = 8
 
+/** The server closes with this when the query params are invalid; retrying can't help. */
+const POLICY_VIOLATION = 1008
 const RETRY_MIN_MS = 500
 const RETRY_MAX_MS = 5000
 
@@ -22,7 +24,9 @@ function socketUrl(path: string): string {
 
 /**
  * One replay session over a websocket: keeps the latest `init` and `tick`,
- * and reconnects with backoff when the socket closes.
+ * and reconnects with backoff when the socket closes. `path` may carry the replay's query params
+ * (`/ws?contract=0.1`); a new path is a new session. If the server rejects the params it closes
+ * with a reason, which lands in `rejected`, and there's no retry.
  *
  * `history` has one point per tick received since the last `init`. It's appended
  * per message, not per render, so no tick is lost when React batches fast ticks.
@@ -34,6 +38,9 @@ function socketUrl(path: string): string {
  */
 export function useTicks(path = '/ws') {
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
+  // Keyed by path, so a new path starts unrejected without a reset.
+  const [rejection, setRejection] = useState<{ path: string; reason: string } | null>(null)
+  const rejected = rejection?.path === path ? rejection.reason : null
   const [init, setInit] = useState<InitMessage | null>(null)
   const [tick, setTick] = useState<TickMessage | null>(null)
   const [history, setHistory] = useState<TickPoint[]>([])
@@ -91,11 +98,15 @@ export function useTicks(path = '/ws') {
             break
         }
       }
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (socket.current === ws) socket.current = null
         if (disposed) return
         setStatus('closed')
         setPlaying(false)
+        if (event.code === POLICY_VIOLATION) {
+          setRejection({ path, reason: event.reason || 'The server rejected these parameters' })
+          return
+        }
         retryTimer = setTimeout(connect, retryMs)
         retryMs = Math.min(retryMs * 2, RETRY_MAX_MS)
       }
@@ -119,5 +130,5 @@ export function useTicks(path = '/ws') {
     return true
   }, [])
 
-  return { status, init, tick, history, failovers, playing, send }
+  return { status, rejected, init, tick, history, failovers, playing, send }
 }

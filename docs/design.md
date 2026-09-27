@@ -90,7 +90,7 @@ One function maps wire data to a visual state; every renderer and theme consumes
 └────────────────────────────────────────────┴─────────────────┘
 ```
 - Map takes the most space and never shifts; panels have fixed widths so ticking numbers don't reflow the layout.
-- Superseded by the HUD (Locked direction): the map fills the viewport and every instrument floats over it. A fixed glass top bar; draggable glass panels (failovers top-left, counters top-right, chart bottom-left by default); "Hide panels" (button or H) leaves only the top bar.
+- Superseded by the HUD (Locked direction): the map fills the viewport and every instrument floats over it. A fixed glass top bar; draggable glass panels (failovers top-left, counters top-right, contract terms bottom-right above the map's credit line, chart bottom-left by default); "Hide panels" (button or H) leaves only the top bar.
 - Narrow screens: not a priority; the demo is desktop. The top bar scrolls sideways if it doesn't fit.
 
 ## Theming seams (what keeps it swappable)

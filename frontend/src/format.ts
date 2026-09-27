@@ -57,3 +57,8 @@ export function formatStamp(iso: string): string {
 export function formatSeconds(s: number): string {
   return s < 1 ? '<1 s' : `${Math.round(s)} s`
 }
+
+/** "0.9 MW"; below 0.1 MW in kW ("36 kW"), so small test fleets don't read as 0.0 MW. */
+export function formatPower(mw: number): string {
+  return mw >= 0.1 ? `${mw.toFixed(1)} MW` : `${Math.round(mw * 1000)} kW`
+}

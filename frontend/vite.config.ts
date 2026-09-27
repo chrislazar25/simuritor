@@ -5,9 +5,10 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   server: {
-    // The backend (uv run uvicorn backend.app:app --port 8000) owns /ws in dev.
+    // The backend (uv run uvicorn backend.app:app --port 8000) owns /ws and /api in dev.
     proxy: {
       '/ws': { target: 'ws://localhost:8000', ws: true },
+      '/api': 'http://localhost:8000',
     },
   },
 })
