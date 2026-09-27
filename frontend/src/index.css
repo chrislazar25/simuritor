@@ -894,8 +894,8 @@ summary {
   max-width: 42ch;
 }
 
-/* Smaller screens use a scrolling instrument grid, keeping every control reachable. */
-@media (max-width: 1100px), (max-height: 780px) {
+/* Phones use a scrolling instrument grid, keeping every control reachable. */
+@media (max-width: 700px) {
   .app {
     height: auto;
     min-height: 100vh;
