@@ -7,16 +7,17 @@ import { FailoverLog, FailoverSummary } from './FailoverLog.tsx'
 import { FloatingPanel } from './FloatingPanel.tsx'
 import { formatClock, formatPrice } from './format.ts'
 import { FleetMap } from './Map.tsx'
+import { ReplayOverview } from './ReplayOverview.tsx'
 import { replayQuery, type Terms } from './terms.ts'
 import { useTicks } from './useTicks.ts'
 
 const HIDDEN_KEY = 'simuritor.panels-hidden'
 const MARGIN = 16
 const BELOW_TOP_BAR = 72 // the top bar floats at 12 px and is ~48 px tall
-const COUNTERS_W = 320 // FloatingPanel's minimum width
-const COUNTERS_H = 340
-const TERMS_W = 320
-const TERMS_H = 460 // shorter when the space under Fleet is; the panel then scrolls
+const COUNTERS_W = 360
+const COUNTERS_H = 350
+const TERMS_W = 360
+const TERMS_H = 420
 const ATTRIBUTION_H = 40 // MapLibre's credit line, bottom-right, stays readable under the terms panel
 
 function loadHidden(): boolean {
@@ -54,15 +55,14 @@ function usePanelsHidden() {
 }
 
 // The HUD from docs/design.md: the map fills the viewport; a fixed glass top bar and draggable glass
-// panels float over it. Default spots: failovers top-left, counters top-right, contract terms
-// bottom-right, chart bottom-left.
+// panels float over it. Replay and failovers sit left; terms and fleet sit right.
 export default function App() {
   // The page's query string is the replay's params, so a link reproduces the run.
   const [query, setQuery] = useState(() => location.search.slice(1))
   const { status, rejected, init, tick, history, failovers, playing, send } = useTicks(query ? `/ws?${query}` : '/ws')
   const [panelsHidden, setPanelsHidden] = usePanelsHidden()
   const finished = init !== null && tick?.i === init.n_ticks - 1
-  // Terms sit between Fleet and the map's credit line.
+  // Keep the experiment above the live fleet readout. Compact screens use a CSS grid.
   const termsSpace = window.innerHeight - BELOW_TOP_BAR - COUNTERS_H - MARGIN - ATTRIBUTION_H
 
   /** Restart with `terms` (null: the backend's defaults): a new connection, unless nothing changed. */
@@ -88,7 +88,7 @@ export default function App() {
         <span className="call" data-active={tick?.fleet.utility_call ?? false} aria-hidden={!tick?.fleet.utility_call}>
           Utility call
         </span>
-        <Controls connected={status === 'open'} playing={playing} finished={finished} send={send} />
+        <Controls connected={status === 'open' && init !== null} playing={playing} finished={finished} send={send} />
         <button
           type="button"
           className="hide-panels"
@@ -98,45 +98,65 @@ export default function App() {
         >
           {panelsHidden ? 'Show panels' : 'Hide panels'}
         </button>
-        <span className="readout status">ws: {status}</span>
+        <span className="readout status" data-status={status} role="status">
+          {rejected
+            ? 'Invalid terms'
+            : status === 'open'
+              ? 'Connected'
+              : status === 'connecting'
+                ? 'Connecting…'
+                : 'Reconnecting…'}
+        </span>
       </header>
       <main className="map">
         <FleetMap init={init} tick={tick} />
       </main>
       {!panelsHidden && (
-        <>
+        <div className="panels">
+          <FloatingPanel
+            title="Replay"
+            storageKey="simuritor.overview-panel"
+            initial={{ w: 400, h: 224, x: MARGIN, y: BELOW_TOP_BAR }}
+          >
+            <ReplayOverview init={init} tick={tick} playing={playing} status={status} rejected={rejected} />
+          </FloatingPanel>
+          <FloatingPanel
+            title="Contract terms"
+            storageKey="simuritor.terms-panel-v2"
+            initial={{
+              w: TERMS_W,
+              h: Math.min(TERMS_H, termsSpace),
+              x: window.innerWidth - TERMS_W - MARGIN,
+              y: BELOW_TOP_BAR,
+            }}
+            summary={<TermsSummary init={init} />}
+          >
+            <ContractTerms init={init} rejected={rejected} onReplay={replay} />
+          </FloatingPanel>
           <FloatingPanel
             title="Failovers"
-            storageKey="simuritor.failover-panel"
-            initial={{ w: 460, h: 220, x: MARGIN, y: BELOW_TOP_BAR }}
+            storageKey="simuritor.failover-panel-v2"
+            initial={{ w: 440, h: 200, x: MARGIN, y: BELOW_TOP_BAR + 240 }}
             summary={<FailoverSummary fleet={tick?.fleet ?? null} />}
           >
             <FailoverLog events={failovers} />
           </FloatingPanel>
           <FloatingPanel
             title="Fleet"
-            storageKey="simuritor.counters-panel"
-            initial={{ w: COUNTERS_W, h: COUNTERS_H, x: window.innerWidth - COUNTERS_W - MARGIN, y: BELOW_TOP_BAR }}
+            storageKey="simuritor.counters-panel-v2"
+            initial={{
+              w: COUNTERS_W,
+              h: COUNTERS_H,
+              x: window.innerWidth - COUNTERS_W - MARGIN,
+              y: window.innerHeight - COUNTERS_H - ATTRIBUTION_H,
+            }}
           >
             <Counters fleet={tick?.fleet ?? null} />
           </FloatingPanel>
-          <FloatingPanel
-            title="Contract terms"
-            storageKey="simuritor.terms-panel"
-            initial={{
-              w: TERMS_W,
-              h: Math.min(TERMS_H, termsSpace),
-              x: window.innerWidth - TERMS_W - MARGIN,
-              y: window.innerHeight - Math.min(TERMS_H, termsSpace) - ATTRIBUTION_H,
-            }}
-            summary={<TermsSummary init={init} />}
-          >
-            <ContractTerms init={init} rejected={rejected} onReplay={replay} />
-          </FloatingPanel>
-          <FloatingPanel title="Price · fleet MW" storageKey="simuritor.chart-panel" initial={{ w: 520, h: 300 }}>
+          <FloatingPanel title="Price · fleet MW" storageKey="simuritor.chart-panel-v2" initial={{ w: 520, h: 240 }}>
             <Charts init={init} history={history} />
           </FloatingPanel>
-        </>
+        </div>
       )}
     </div>
   )

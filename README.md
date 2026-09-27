@@ -30,7 +30,7 @@ A deterministic dispatch policy keeps both promises. Failover runs on a **second
 - the controller detects them from 2-second heartbeats;
 - it moves their load onto the healthy homes with the most spare capacity.
 
-**The tool part.** A live map and HUD show all of this. A **Contract terms** panel lets you change the contract and click **Find safe contract**: in seconds it replays every contract size against Uri and a normal week, and tells you the largest you can sign.
+**The tool part.** A live map and HUD show all of this. The **Contract terms** panel lets you switch scenarios and policies, change backup hours, and **Find qualifying contract**: in seconds it replays every size from 5–60% against Uri and a normal week, shows the largest that clears the bar in each, and lets you apply it to the replay.
 
 ## Findings
 3,000 homes; means over seeds 0–2 unless noted. Reproduce with `scripts/sweep.py` and `scripts/plots.py`. Full tables are in [`docs/notes.md`](docs/notes.md).
@@ -44,7 +44,7 @@ A deterministic dispatch policy keeps both promises. Failover runs on a **second
 | 30% | 100% | 61.1% |
 | 60% | 100% | 23.3% |
 
-The "Find safe contract" rule is the largest size keeping ≥ 95%. By that rule: **15% in Uri (95.6% kept), 60% in the normal week** (the largest size tested, so a floor, not a ceiling). Sizes step by 5%. The normal week (Feb 21–27, 2022) and Uri's pre-storm days each contain a single call, so read "100%" there as comfortable, not proven.
+The "safe contract" (the app's **Find qualifying contract**) is the largest tested size keeping ≥ 95% of called intervals, averaged over three seeds, with no more medical homes running out than with no contract. By that rule: **15% in Uri (95.6% kept), 60% in the normal week** (the largest size tested, so a floor, not a ceiling). Sizes step by 5%. The normal week (Feb 21–27, 2022) and Uri's pre-storm days each contain a single call, so read "100%" there as comfortable, not proven.
 
 **2. Energy runs out before failover does.**
 - Failover holds: at 10%, **1,344 failovers** in the replay, **0 uncovered**, covered in **5 s** (warned) / **11 s** (silent) against a 60 s target. Those times come from the modelled heartbeat and reassign delays, not measured device latency.
@@ -135,7 +135,7 @@ A 4 h reserve moves Uri's safe contract from 15% to **25%**. Every hour of backu
 | Same at 10,000 homes | ~3 s |
 | Live streaming at 3,000 homes | 56 ticks/s |
 | The insight sweep (102 runs) | ~19 s |
-| "Find safe contract" (78 replays) | ~12 s cold; the default terms are precomputed at startup |
+| "Find qualifying contract" (78 replays) | ~12 s cold; the default terms are precomputed at startup |
 
 **Tests:** 241.
 
@@ -187,7 +187,7 @@ cd frontend && npm install && npm run dev          # http://localhost:5173
 
 The replay runs with the terms in the URL, e.g. `/?policy=naive&contract=0.1`. The Contract terms panel writes them for you.
 
-In the app: **Play / Pause**, speed (1–32 ticks/s), **Reset**, and **Hide panels** (or **H**) for a bare map. Panels drag, resize and expand. Change terms in **Contract terms**, then **Find safe contract** to compare every size against Uri and a normal week.
+In the app: **Play / Pause**, speed (1–32 ticks/s), **Reset**, and **Hide panels** (or **H**) for a bare map. Panels drag, resize and expand; on a phone they stack. Contract edits are drafts until **Apply & reset**. **Find qualifying contract** opens both scenarios side by side, and **Apply** loads a result into the replay. A walkthrough is in [`docs/demo.md`](docs/demo.md).
 
 Headless:
 ```bash

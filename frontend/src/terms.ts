@@ -23,14 +23,24 @@ export type TermSpec =
  */
 export const TERMS: TermSpec[] = [
   {
+    key: 'scenario',
+    label: 'Scenario',
+    kind: 'choice',
+    options: [
+      { value: 'uri', label: 'Winter Storm Uri' },
+      { value: 'normal', label: 'Normal week' },
+    ],
+    hint: 'Replay February 2021 or the February 2022 comparison week',
+  },
+  {
     key: 'policy',
     label: 'Policy',
     kind: 'choice',
     options: [
-      { value: 'contract', label: 'Ours' },
+      { value: 'contract', label: 'Contract-aware' },
       { value: 'naive', label: 'Naive' },
     ],
-    hint: 'Ours keeps both contracts; naive is the price-rule baseline',
+    hint: 'Contract-aware protects backup reserves and plans for calls; naive follows price thresholds',
   },
   {
     key: 'contract',
@@ -132,9 +142,11 @@ export function replayQuery(terms: Terms, base: string): string {
   return q.toString()
 }
 
-/** The /api/safe-contract query: every param but the contract size, which the endpoint sweeps. */
+/** The endpoint sweeps both scenarios and contract sizes under the remaining terms. */
 export function scenarioQuery(terms: Terms): string {
   const q = new URLSearchParams()
-  for (const [key, value] of Object.entries(terms)) if (key !== 'contract') q.set(key, clean(value))
+  for (const [key, value] of Object.entries(terms)) {
+    if (key !== 'contract' && key !== 'scenario') q.set(key, clean(value))
+  }
   return q.toString()
 }

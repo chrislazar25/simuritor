@@ -37,13 +37,18 @@ export function Controls({ connected, playing, finished, send }: Props) {
           Play
         </button>
       )}
-      <div className="speeds" role="group" aria-label="Speed, ticks per second">
+      <select
+        aria-label="Replay speed"
+        value={speed}
+        onChange={(e) => changeSpeed(Number(e.target.value))}
+        disabled={!connected}
+      >
         {SPEEDS.map((s) => (
-          <button key={s} type="button" aria-pressed={s === speed} onClick={() => changeSpeed(s)} disabled={!connected}>
-            {s}×
-          </button>
+          <option key={s} value={s}>
+            {s} {s === 1 ? 'tick' : 'ticks'}/s
+          </option>
         ))}
-      </div>
+      </select>
       <button type="button" onClick={() => send({ type: 'reset' })} disabled={!connected}>
         Reset
       </button>

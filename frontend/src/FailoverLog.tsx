@@ -30,7 +30,7 @@ export function FailoverSummary({ fleet }: { fleet: FleetStats | null }) {
 
 /** The latest failovers, newest first: "Feb 15 03:15 · h0231 silent → covered in 11 s by 3 homes". */
 export function FailoverLog({ events }: { events: LoggedFailover[] }) {
-  if (events.length === 0) return <p className="failover-empty">No failovers yet</p>
+  if (events.length === 0) return <p className="failover-empty">No failovers yet. During utility calls, failed batteries hand their share to homes with spare capacity.</p>
   return (
     <ol className="failover-log">
       {events.map((e) => {
