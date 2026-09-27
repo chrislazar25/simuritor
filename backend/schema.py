@@ -23,8 +23,9 @@ MAX_TICKS_PER_SEC = 64
 Action = Literal["charge", "discharge", "hold", "backup"]
 """`backup` = grid is down and the battery powers its own house (no export)."""
 
-Source = Literal["rule", "jev", "fallback"]
-"""Which tier of the decision stack produced the action."""
+Source = Literal["rule"]
+"""What produced the action. Every policy today is deterministic rules; a policy of another kind
+(say, model-backed) would add its own value here."""
 
 EEA = Literal["Normal", "EEA1", "EEA2", "EEA3"]
 """ERCOT Energy Emergency Alert level."""

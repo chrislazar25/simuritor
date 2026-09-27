@@ -43,8 +43,9 @@ Keep it lean: one interface per piece, one or two implementations. Add an abstra
 - Fleet power: `available_mw` (could export now), `promised_mw` (committed ahead, nullable), `delivered_mw` (actually exported).
 
 ## Where things live
-- `docs/slice-spec.md`: current build scope, defaults, repo layout.
+- `docs/dispatch-design.md`: the current design (contracts, ContractPolicy, failover, the insight experiment, assumptions).
+- `docs/slice-spec.md`: Friday's build spec (historical), defaults, repo layout.
 - `docs/design.md`: look and feel, home visual states, theming seams.
-- `docs/notes.md`: open questions, data findings, deferred ideas.
-- `docs/pitch-points.md`, `docs/hackathon-guide.md`: the why, and how it's judged.
+- `docs/notes.md`: open questions, data findings, results, deferred ideas.
+- `docs/hackathon-guide.md`: how it's judged. `docs/archive/`: dropped plans.
 - `.claude/skills/`: playbooks (FastAPI, React, Vite, dashboards, testing) any agent may read.

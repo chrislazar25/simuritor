@@ -122,7 +122,7 @@ export interface HomeState {
    * Battery power magnitude; direction comes from `action`.
    */
   kw: number;
-  src: "rule" | "jev" | "fallback";
+  src: "rule";
   /**
    * Decision confidence, 0-1; null for rule decisions.
    */

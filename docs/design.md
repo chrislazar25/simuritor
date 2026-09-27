@@ -29,7 +29,7 @@ Status: **vibe locked Sat 10:30 → "Apple Maps" (see [Locked direction](#locked
 
 ### Playable (interaction with substance, in build order)
 1. **Timeline scrub:** drag to any tick. Live mode needs a `seek` client message (backend replays from tick 0 to the target; it takes ~70 ms for the whole week) → contract change; the recorded/deployed mode seeks locally.
-2. **Click a home → card:** household, capacity, SoC sparkline, current action, decision source (rule / jev / fallback) and confidence. The trust layer, clickable.
+2. **Click a home → card:** household, capacity, SoC sparkline, current action, and the rule that decided its action. (Not built.)
 3. **Cut a neighbourhood** (click or lasso an area → its homes lose grid): the chaos injection made visible. Needs the backend chaos seam + a client message; Saturday evening if chaos exists.
 4. Stretch: **reserve-% slider** that re-runs the replay (the insight experiment, hands-on).
 5. Stretch: scripted **camera flyover** for the Loom intro.

@@ -1,5 +1,7 @@
 # Walking skeleton (Fri night) — spec with defaults
 
+> **Historical:** Friday night's build spec, kept for its defaults. The Jev plans mentioned below were dropped on Saturday; the current design is [`dispatch-design.md`](dispatch-design.md).
+
 Goal by ~1am: press Play → the Uri week replays tick by tick, backend streams each tick over a websocket, the map and one chart update live. Ugly is fine; it must run end to end. Everything else (Jev, chaos, insight, load-based outages) plugs into this on Saturday.
 
 ## In scope tonight

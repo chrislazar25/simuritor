@@ -1,5 +1,7 @@
 # Uri Replay: pitch points mapped to the rubric
 
+> **Archived (Sat Sep 26):** the original pitch, built around an LLM (TypeSafe's Jev) deciding the ambiguous dispatch calls. We dropped it: dispatch works as deterministic rules, and the hard problem is keeping the fleet's promises when batteries fail. See [`../dispatch-design.md`](../dispatch-design.md) and the README.
+
 Tracks: Orchestration (primary) + Open Grid Data. Judged on the 5-min Loom + codebase.
 
 ## One-liner
