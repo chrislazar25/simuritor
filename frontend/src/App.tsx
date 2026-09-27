@@ -56,9 +56,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <main className="map">
-        <FleetMap init={init} tick={tick} />
-      </main>
+      {/* The bar comes first so Tab reaches the controls before the map; it's fixed, so order doesn't move it. */}
       <header className="topbar">
         <span className="brand">SIMURITOR</span>
         <span className="readout clock">{tick ? formatClock(tick.t) : init ? formatClock(init.start) : '–'}</span>
@@ -83,6 +81,9 @@ export default function App() {
         </button>
         <span className="readout status">ws: {status}</span>
       </header>
+      <main className="map">
+        <FleetMap init={init} tick={tick} />
+      </main>
       {!panelsHidden && (
         <>
           <FloatingPanel
