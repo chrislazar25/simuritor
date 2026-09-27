@@ -3,7 +3,7 @@ import { CartesianGrid, Legend, Line, LineChart, ReferenceDot, ReferenceLine, XA
 import { formatPct, formatPower } from './format.ts'
 import { scenarioQuery, type Terms } from './terms.ts'
 import { cssVar } from './tokens.ts'
-import type { SafeContractResponse } from './types.ts'
+import type { SafeContractCurve, SafeContractResponse } from './types.ts'
 
 // These mirror backend constants the wire doesn't carry (docs/notes.md, "To do").
 const SAFE_KEPT = 0.95 // SAFE_KEPT in backend/safe_contract.py
@@ -11,24 +11,42 @@ const HOME_MAX_KW = 12 // FleetConfig.max_kw in backend/sim.py: nameplate = home
 
 type Result = { query: string } & ({ response: SafeContractResponse } | { error: string })
 
-/** The answer in one sentence: "Sign up to 0.9 MW (15% of this fleet); above that, Uri breaks promises." */
+const scenario = (r: SafeContractResponse, name: SafeContractCurve['scenario']) =>
+  r.scenarios.find((s) => s.scenario === name)
+
+/**
+ * The answer in one or two sentences: "Sign up to 5.4 MW (15% of this fleet); above that, Uri breaks
+ * promises. In a normal winter week, up to 60% holds."
+ */
 function verdict(r: SafeContractResponse): string {
-  const smallest = r.curve[0]?.contract ?? 0
-  const largest = r.curve.at(-1)?.contract
-  if (r.safe === null) {
-    return `Even ${formatPct(smallest)} is too much: no contract size keeps ${formatPct(SAFE_KEPT)} of its storm calls through Uri.`
+  const uri = scenario(r, 'uri')
+  if (!uri) return 'No Uri answer came back.'
+  const smallest = uri.curve[0]?.contract ?? 0
+  const largest = uri.curve.at(-1)?.contract
+  const normal = scenario(r, 'normal')
+  const normalNote =
+    normal?.safe != null ? ` In a normal winter week, up to ${formatPct(normal.safe)} holds.` : ''
+  if (uri.safe === null) {
+    return `Even ${formatPct(smallest)} is too much: no contract size keeps ${formatPct(SAFE_KEPT)} of its storm calls through Uri.${normalNote}`
   }
-  const size = `${formatPower((r.safe * r.params.homes * HOME_MAX_KW) / 1000)} (${formatPct(r.safe)} of this fleet)`
-  if (r.safe === largest) return `Sign up to ${size}, the largest size tried; Uri kept its promises all the way.`
-  return `Sign up to ${size}; above that, Uri breaks promises.`
+  const size = `${formatPower((uri.safe * r.params.homes * HOME_MAX_KW) / 1000)} (${formatPct(uri.safe)} of this fleet)`
+  if (uri.safe === largest) return `Sign up to ${size}, the largest size tried; Uri kept its promises all the way.${normalNote}`
+  return `Sign up to ${size}; above that, Uri breaks promises.${normalNote}`
 }
 
-/** Storm promise kept against contract size, the 95% bar, the safe point, and the normal week when it had calls. */
+/** Uri storm promise kept against contract size, the 95% bar, the safe point, and the normal week when it had calls. */
 function SafeCurve({ response }: { response: SafeContractResponse }) {
   const pct = (f: number | null) => (f === null ? null : Math.round(f * 1000) / 10)
-  const data = response.curve.map((p) => ({ contract: pct(p.contract), storm: pct(p.storm_kept), normal: pct(p.pre_kept) }))
+  const uri = scenario(response, 'uri')
+  const normalKept = new Map(scenario(response, 'normal')?.curve.map((p) => [p.contract, p.kept]))
+  if (!uri) return null
+  const data = uri.curve.map((p) => ({
+    contract: pct(p.contract),
+    storm: pct(p.kept),
+    normal: pct(normalKept.get(p.contract) ?? null),
+  }))
   const hasNormal = data.some((p) => p.normal !== null)
-  const safe = response.curve.find((p) => p.contract === response.safe)
+  const safe = uri.curve.find((p) => p.contract === uri.safe)
   const muted = cssVar('--muted')
   const axis = { stroke: muted, fontSize: 10, tickLine: false }
   return (
@@ -75,7 +93,7 @@ function SafeCurve({ response }: { response: SafeContractResponse }) {
         // No storm calls counts as kept, so such a point sits on 100%.
         <ReferenceDot
           x={pct(safe.contract)!}
-          y={pct(safe.storm_kept) ?? 100}
+          y={pct(safe.kept) ?? 100}
           r={4}
           fill={cssVar('--state-grid')}
           stroke={cssVar('--surface')}
