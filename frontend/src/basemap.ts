@@ -7,15 +7,17 @@ type Layer = Style['layers'][number]
 export const BASEMAP_STYLE = 'https://tiles.openfreemap.org/styles/dark'
 
 // The night palette (docs/design.md, "The scene"). Everything sits well below the home dots in
-// brightness, so the fleet is the brightest thing on the map.
+// brightness, so the fleet is the brightest thing on the map. Land is a deep blue-grey rather than
+// near-black, so it survives video compression (which crushes dark tones) and dark homes' grey
+// rings still read against it.
 const NIGHT = {
-  background: '#0a0a0b',
-  park: '#0e1310',
-  water: '#0b1219',
-  road: { minor: '#171718', major: '#1f1f20', motorway: '#29292a' },
-  building: '#161618',
-  label: '#56544f',
-  labelHalo: '#0a0a0b',
+  background: '#161a20',
+  park: '#161e1d',
+  water: '#0b121c',
+  road: { minor: '#1e232a', major: '#262b33', motorway: '#2f353e' },
+  building: '#1e2229',
+  label: '#666a70',
+  labelHalo: '#161a20',
 }
 
 const dimLabel = { 'text-color': NIGHT.label, 'text-halo-color': NIGHT.labelHalo, 'text-halo-width': 1, 'text-halo-blur': 0 }
@@ -42,9 +44,12 @@ const KEEP: Record<string, { paint?: Record<string, unknown>; layout?: Record<st
   place_other: { paint: dimLabel, layout: { 'text-size': 9, 'text-padding': 64, 'text-letter-spacing': 0.1 } },
 }
 
+/** The basemap's 3D buildings; ground marks that must not paint over them go below this layer. */
+export const BUILDINGS_LAYER = 'building-3d'
+
 /** Dim 3D buildings, in place of the stock flat footprints (same tiles and fields as OpenFreeMap's liberty style). */
 const BUILDINGS: Layer = {
-  id: 'building-3d',
+  id: BUILDINGS_LAYER,
   type: 'fill-extrusion',
   source: 'openmaptiles',
   'source-layer': 'building',
@@ -53,7 +58,8 @@ const BUILDINGS: Layer = {
     'fill-extrusion-color': NIGHT.building,
     'fill-extrusion-height': ['get', 'render_height'],
     'fill-extrusion-base': ['get', 'render_min_height'],
-    'fill-extrusion-opacity': 0.6,
+    // Opaque, so ground marks under them don't show through.
+    'fill-extrusion-opacity': 1,
   },
 }
 

@@ -3,7 +3,7 @@ import { type AddLayerObject, type GeoJSONSource, MapLibreMap, setWorkerUrl } fr
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BASEMAP_STYLE, nightStyle } from './basemap.ts'
+import { BASEMAP_STYLE, BUILDINGS_LAYER, nightStyle } from './basemap.ts'
 import { type HomeVisual, homeVisual } from './homeVisual.ts'
 import { cssVar } from './tokens.ts'
 import type { FailoverEvent, InitMessage, TickMessage } from './types.ts'
@@ -17,9 +17,12 @@ const GLOW = 'homes-glow'
 // Zoomed in, each home is a small 3D box with a halo on the ground (the "3D view").
 const BOXES = 'home-boxes'
 const HALO = 'home-halo'
+const OUTLINE = 'home-outline'
+const DARK_RING = 'home-dark-ring'
 const BOX_HALF_M = 7 // a 14 m square footprint
 const BOX_HEIGHT_M = 8
 const HALO_M = 22 // halo radius on the ground
+const DARK_RING_M = 13 // just clear of the box's corners
 // Dots fade out and boxes fade in across this zoom range.
 const FADE_FROM = 14.25
 const FADE_TO = 14.75
@@ -136,7 +139,8 @@ const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').match
 /**
  * The scene: a muted night basemap (basemap.ts), tilted, with every home as a dot in ONE circle
  * layer plus a soft glow under it; zoomed in past ~14.5 the dots cross-fade to small 3D boxes
- * with a halo on the ground. A red ring flashes on homes that fail over, in either view.
+ * with a halo on the ground (dark homes: a ring and footprint outline instead). A red ring
+ * flashes on homes that fail over, in either view.
  * Layers and style are set up once; each tick only updates the homes that changed.
  */
 export function FleetMap({ init, tick }: { init: InitMessage | null; tick: TickMessage | null }) {
@@ -176,6 +180,15 @@ export function FleetMap({ init, tick }: { init: InitMessage | null; tick: TickM
           colour('grid'),
         ])
       const powered = (on: number) => ['match', visual, ['dark', 'dark_contract'], 0, on]
+      // Dark homes are hollow rings in both views, so they don't rely on colour alone: dark has a
+      // heavier ring, dark by contract a thinner, fainter one. `other` is everyone else's stroke.
+      const darkRing = (other: { width: number; opacity: number }) => ({
+        width: expr(['match', visual, 'dark', 1.5, 'dark_contract', 1, other.width]),
+        opacity: ['match', visual, 'dark', 1, 'dark_contract', 0.7, other.opacity],
+        colour: expr(['match', visual, 'dark', colour('dark'), 'dark_contract', colour('dark-contract'), cssVar('--surface')]),
+      })
+      const dotRing = darkRing({ width: 0.5, opacity: 1 })
+      const groundRing = darkRing({ width: 0, opacity: 0 })
       const empty: FeatureCollection = { type: 'FeatureCollection', features: [] }
       m.addSource(SOURCE, { type: 'geojson', data: empty })
       m.addSource(BOXES, { type: 'geojson', data: empty })
@@ -207,15 +220,58 @@ export function FleetMap({ init, tick }: { init: InitMessage | null; tick: TickM
           'circle-opacity': crossFade(0, powered(0.5)),
         },
       })
-      // A plain box per home, no roof. Dark is near-black (the house has gone out); dark by
-      // contract is a dim grey, so the two still differ.
+      // Dark homes keep their hollow ring in the 3D view, lying on the ground around the box. It
+      // starts at the dot's size, so the cross-fade doesn't jump, and is true ground size by z17.
+      m.addLayer({
+        id: DARK_RING,
+        type: 'circle',
+        source: SOURCE,
+        minzoom: FADE_FROM,
+        paint: {
+          'circle-radius': expr([
+            'interpolate',
+            ['exponential', 2],
+            ['zoom'],
+            FADE_FROM,
+            8,
+            17,
+            DARK_RING_M * pxPerMetre(17),
+            22,
+            DARK_RING_M * pxPerMetre(22),
+          ]),
+          'circle-color': 'transparent',
+          'circle-pitch-alignment': 'map',
+          // Thicker close up, where a hairline on the tilted ground all but vanishes.
+          'circle-stroke-width': expr(['interpolate', ['linear'], ['zoom'], 15, groundRing.width, 18, ['*', 2, groundRing.width]]),
+          'circle-stroke-color': groundRing.colour,
+          'circle-stroke-opacity': crossFade(0, groundRing.opacity),
+        },
+      })
+      // A thin outline round dark homes' footprints, so the box's base edge reads against the
+      // land. It sits under the basemap's buildings: a flat layer drawn after an extrusion paints
+      // over it, and the boxes often stand inside a real building.
+      m.addLayer(
+        {
+          id: OUTLINE,
+          type: 'line',
+          source: BOXES,
+          minzoom: FADE_FROM,
+          paint: {
+            'line-color': groundRing.colour,
+            'line-width': 1,
+            'line-opacity': crossFade(0, groundRing.opacity),
+          },
+        },
+        BUILDINGS_LAYER,
+      )
+      // A plain box per home, no roof. Dark homes are dim grey boxes, well below any lit one.
       m.addLayer({
         id: BOXES,
         type: 'fill-extrusion',
         source: BOXES,
         minzoom: FADE_FROM,
         paint: {
-          'fill-extrusion-color': byVisual(colour('dark-3d'), colour('dark-contract')),
+          'fill-extrusion-color': byVisual(colour('dark'), colour('dark-contract')),
           'fill-extrusion-height': BOX_HEIGHT_M,
           'fill-extrusion-opacity': crossFade(0, 1),
         },
@@ -228,20 +284,10 @@ export function FleetMap({ init, tick }: { init: InitMessage | null; tick: TickM
         paint: {
           'circle-radius': dotRadius(),
           'circle-color': byVisual(colour('dark'), colour('dark-contract')),
-          // Both darks are hollow as well as grey, so they don't rely on colour alone; dark by
-          // contract has the thinner, fainter ring.
           'circle-opacity': crossFade(powered(1), 0),
-          'circle-stroke-width': expr(['match', visual, 'dark', 1.5, 'dark_contract', 1, 0.5]),
-          'circle-stroke-opacity': crossFade(['match', visual, 'dark_contract', 0.7, 1], 0),
-          'circle-stroke-color': expr([
-            'match',
-            visual,
-            'dark',
-            colour('dark'),
-            'dark_contract',
-            colour('dark-contract'),
-            cssVar('--surface'),
-          ]),
+          'circle-stroke-width': dotRing.width,
+          'circle-stroke-opacity': crossFade(dotRing.opacity, 0),
+          'circle-stroke-color': dotRing.colour,
         },
       })
       // Failover rings, red. Shape tells the kinds apart, not colour: warned is one ring,

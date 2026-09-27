@@ -5,11 +5,11 @@ Status: **vibe locked Sat 10:30 → "Apple Maps" (see [Locked direction](#locked
 ## Locked direction (Sat)
 
 ### The scene
-- **Basemap:** MapLibre with **OpenFreeMap vector tiles** (free, no key, building heights), replacing the Carto rasters. Custom muted palette as a style owned by the theme, not a stock style. Built: OpenFreeMap's dark style restyled in `frontend/src/basemap.ts` (no road shields, POIs or place labels above neighbourhoods; thin dim roads; subtle water and parks; dim extrusions). Home dots stay the brightest thing on the map and grow with zoom.
+- **Basemap:** MapLibre with **OpenFreeMap vector tiles** (free, no key, building heights), replacing the Carto rasters. Custom muted palette as a style owned by the theme, not a stock style. Built: OpenFreeMap's dark style restyled in `frontend/src/basemap.ts` (no road shields, POIs or place labels above neighbourhoods; deep blue-grey land, darker blue water, thin dim roads, subtle parks, dim opaque extrusions). Land is lifted off near-black so dark tones survive a screen recording's compression. Home dots stay the brightest thing on the map and grow with zoom.
 - **Camera:** tilted (~50–60° pitch), slight bearing, framed on downtown + Lady Bird Lake with the fleet's bbox in view. 3D building extrusions (`fill-extrusion`), so the skyline and the Capitol read as shapes. Pan/zoom/rotate stay enabled.
 - **Landmarks:** a handful of pinned labels only: Texas Capitol, Congress Ave Bridge, Frost Bank Tower, Lady Bird Lake. No custom 3D models.
 - **Homes:** one WebGL circle layer (still never DOM markers) with a soft glow halo per visual state: warm window glow = powered on grid, blue pulse = exporting, amber = on battery, hollow dim grey = dark. **Medical homes get a ring** (the at-risk overlay).
-- **Zoomed in (past ~14.5):** the dots cross-fade to small 3D boxes (14 m square, 8 m tall, no roof) coloured by visual state, with a soft halo on the ground under powered homes. Dark is a near-black box and dark by contract a dim grey, neither with a halo.
+- **Zoomed in (past ~14.5):** the dots cross-fade to small 3D boxes (14 m square, 8 m tall, no roof) coloured by visual state, with a soft halo on the ground under powered homes. Dark homes are dim grey boxes with no halo; they keep the dot view's hollow ring on the ground (heavier for dark, thinner and fainter for dark by contract) plus a thin footprint outline, so they read at every zoom.
 - **Failovers:** a home that fails over flashes a red ring that grows and fades over ~1 s of real time. Warned is one ring, silent a double ring, so shape tells them apart, not colour. `prefers-reduced-motion`: a still ring for that one tick.
 
 ### Light: the sim's own sun (replaces the raster cross-fade below)
