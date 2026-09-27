@@ -5,13 +5,13 @@ import math
 import pytest
 
 from backend.safe_contract import CONTRACTS, Summary, point, safest, summarise
-from backend.schema import SafeContractPoint, ScenarioParams
+from backend.schema import SafeContractPoint, SweepParams
 
 
-def at(contract: float, storm_kept: float | None, critical_ran_out: float = 4.0) -> SafeContractPoint:
+def at(contract: float, kept: float | None, critical_ran_out: float = 4.0) -> SafeContractPoint:
     return SafeContractPoint(
         contract=contract,
-        storm_kept=storm_kept,
+        kept=kept,
         pre_kept=1.0,
         contract_pnl_usd=0.0,
         backup_cost_usd=0.0,
@@ -39,7 +39,7 @@ def test_a_contract_that_runs_out_more_critical_homes_than_no_contract_is_not_sa
     assert safest(curve, baseline_critical_ran_out=4.0) == 0.05
 
 
-def test_a_contract_never_called_in_the_storm_is_vacuously_kept() -> None:
+def test_a_contract_never_called_is_vacuously_kept() -> None:
     assert safest([at(0.05, None), at(0.1, None)], baseline_critical_ran_out=4.0) == 0.1
 
 
@@ -50,21 +50,27 @@ def test_no_safe_contract() -> None:
 
 def test_point_averages_seeds_and_skips_seeds_without_calls() -> None:
     runs = [
-        Summary(storm_kept=0.9, pre_kept=math.nan, contract_pnl_usd=100.0, backup_cost_usd=10.0, uncovered=1,
+        Summary(kept=0.9, pre_kept=math.nan, contract_pnl_usd=100.0, backup_cost_usd=10.0, uncovered=1,
                 critical_ran_out=2),
-        Summary(storm_kept=1.0, pre_kept=math.nan, contract_pnl_usd=200.0, backup_cost_usd=20.0, uncovered=2,
+        Summary(kept=1.0, pre_kept=math.nan, contract_pnl_usd=200.0, backup_cost_usd=20.0, uncovered=2,
                 critical_ran_out=5),
     ]
     p = point(0.1, runs)
-    assert p.storm_kept == pytest.approx(0.95) and p.pre_kept is None
+    assert p.kept == pytest.approx(0.95) and p.pre_kept is None
     assert (p.contract_pnl_usd, p.backup_cost_usd, p.uncovered, p.critical_ran_out) == (150.0, 15.0, 1.5, 3.5)
 
 
-def test_summary_of_a_replay_with_and_without_a_contract() -> None:
-    params = ScenarioParams(homes=50)
-    none = summarise(params, None, seed=0)
-    assert math.isnan(none.storm_kept) and math.isnan(none.pre_kept)
+def test_summary_of_a_uri_replay_with_and_without_a_contract() -> None:
+    params = SweepParams(homes=50)
+    none = summarise(params, "uri", None, seed=0)
+    assert math.isnan(none.kept) and math.isnan(none.pre_kept)
     assert none.contract_pnl_usd == 0 and none.uncovered == 0
-    small = summarise(params, 0.05, seed=0)
-    assert 0 < small.storm_kept <= 1 and small.pre_kept == 1.0
+    small = summarise(params, "uri", 0.05, seed=0)
+    assert 0 < small.kept <= 1 and small.pre_kept == 1.0
     assert small.contract_pnl_usd != 0 and small.backup_cost_usd > 0
+
+
+def test_summary_of_the_normal_week_has_no_pre_window_and_no_outages() -> None:
+    week = summarise(SweepParams(homes=50), "normal", 0.6, seed=0)
+    assert week.kept == 1.0 and math.isnan(week.pre_kept)
+    assert week.critical_ran_out == 0 and week.contract_pnl_usd > 0

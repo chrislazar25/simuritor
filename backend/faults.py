@@ -20,6 +20,34 @@ OUTAGE_END = datetime(2021, 2, 18, 12, 0, tzinfo=TZ)
 """Exclusive. ⚠ Assumption, to verify."""
 
 
+def feeders(lat: np.ndarray, lon: np.ndarray, k: int, rng: np.random.Generator, max_iter: int = 100) -> np.ndarray:
+    """Each home's feeder, 0 to k - 1: seeded k-means on position (k-means++ start).
+
+    ⚠ A stand-in for the real distribution network: homes near each other share a feeder, so an
+    outage takes out a neighbourhood. Distances in degrees, longitude scaled by cos(latitude).
+    """
+    points = np.column_stack([lon * math.cos(math.radians(float(lat.mean()))), lat])
+    n, k = len(points), min(k, len(points))
+    centers = np.empty((k, 2))
+    centers[0] = points[rng.integers(n)]
+    nearest = ((points - centers[0]) ** 2).sum(axis=1)
+    for j in range(1, k):
+        pick = rng.choice(n, p=nearest / nearest.sum()) if nearest.sum() > 0 else rng.integers(n)
+        centers[j] = points[pick]
+        nearest = np.minimum(nearest, ((points - centers[j]) ** 2).sum(axis=1))
+    label = np.full(n, -1)
+    for _ in range(max_iter):
+        new = ((points[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2).argmin(axis=1)
+        if np.array_equal(new, label):
+            break
+        label = new
+        for j in range(k):
+            members = points[label == j]
+            if len(members):
+                centers[j] = members.mean(axis=0)
+    return label
+
+
 class Fault(Protocol):
     def grid_down(self, t: datetime) -> np.ndarray:
         """Bool per home: True where this fault cuts the home's grid power at `t`.
@@ -84,18 +112,23 @@ class SilentDeviceFaults:
 class RollingOutage:
     """Rotating outages over one window, plus a share of homes that are never restored.
 
-    Homes are split (seeded) into `never_restored_share` of the fleet, out for the whole
-    window, and `n_groups` rotation groups for the rest. Each group cycles `off_hours` off,
-    `on_hours` on. The groups' cycles are staggered evenly (5 groups: 2 h apart), then each is
-    shifted by a seeded offset of 0 to `max_offset_ticks` whole ticks, so cuts land on varied
-    quarter hours rather than all on the hour. Over a cycle 40% of rotating homes are out (2 of
-    5 groups; 46% of the fleet with the never-restored 10%); at a given moment 1 to 3 groups.
+    Utilities shed load a feeder at a time, so whole feeders (neighbourhoods, `feeders`) move
+    together. A seeded random order of feeders fills the never-restored set first, out for the
+    whole window, stopping at the total closest to `never_restored_share` of the fleet. The other
+    feeders go to `n_groups` rotation groups, largest first, each to the group with the fewest homes
+    so far. Each group cycles `off_hours` off, `on_hours` on. The groups' cycles are staggered
+    evenly (5 groups: 2 h apart), then each is shifted by a seeded offset of 0 to
+    `max_offset_ticks` whole ticks, so cuts land on varied quarter hours, not all on the hour.
+    Over a cycle 40% of rotating homes are out (2 of 5 groups; ~46% of the fleet with the
+    never-restored ~10%); at a given moment 1 to 3 groups.
+    Groups are only roughly equal, because feeders are whole.
 
     ⚠ Assumption (docs/notes.md): ERCOT intended short rotations, but many circuits stayed
     out for days. The never-restored share is that second case, where reserve policy matters most.
     """
 
-    n_homes: int
+    feeder: np.ndarray
+    """Each home's feeder (`feeders`)."""
     rng: np.random.Generator
     off_hours: float = 4.0
     on_hours: float = 6.0
@@ -105,22 +138,38 @@ class RollingOutage:
     """⚠ Each group's cycle starts 0 to this many ticks after its even stagger."""
     start: datetime = OUTAGE_START
     end: datetime = OUTAGE_END
+    feeder_group: np.ndarray = field(init=False)
+    """Rotation group per feeder, 0 to n_groups - 1; -1 for never restored."""
     group: np.ndarray = field(init=False)
-    """Rotation group per home, 0 to n_groups - 1; -1 for never restored."""
+    """Rotation group per home: its feeder's."""
     offset_ticks: np.ndarray = field(init=False)
     """Per group: whole ticks its cycle is shifted by."""
 
     def __post_init__(self) -> None:
-        order = self.rng.permutation(self.n_homes)
-        n_never = round(self.never_restored_share * self.n_homes)
-        group = np.full(self.n_homes, -1)
-        group[order[n_never:]] = np.arange(self.n_homes - n_never) % self.n_groups
-        group.setflags(write=False)
+        size = np.bincount(self.feeder)
+        order = self.rng.permutation(len(size))
+        total = np.concatenate([[0], np.cumsum(size[order])])
+        n_never = int(np.abs(total - self.never_restored_share * len(self.feeder)).argmin())
+        feeder_group = np.full(len(size), -1)
+        homes = np.zeros(self.n_groups, dtype=int)
+        rest = order[n_never:]
+        for f in rest[np.argsort(-size[rest], kind="stable")]:
+            g = int(homes.argmin())
+            feeder_group[f] = g
+            homes[g] += size[f]
+        group = feeder_group[self.feeder]
+        for a in (feeder_group, group):
+            a.setflags(write=False)
+        object.__setattr__(self, "feeder_group", feeder_group)
         object.__setattr__(self, "group", group)
         # Drawn after the groups, so adding offsets left the group split unchanged.
         offset = self.rng.integers(0, self.max_offset_ticks + 1, self.n_groups)
         offset.setflags(write=False)
         object.__setattr__(self, "offset_ticks", offset)
+
+    @property
+    def n_homes(self) -> int:
+        return len(self.feeder)
 
     def grid_down(self, t: datetime) -> np.ndarray:
         if not self.start <= t < self.end:

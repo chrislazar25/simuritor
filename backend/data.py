@@ -1,7 +1,8 @@
 """Data source seam: the outside world the sim replays, one `Frame` per 15-minute tick.
 
-The sim core depends only on `Frame` and `DataSource`. Tonight's source reads the
-Uri parquet files in `data/`; another crisis or a live feed is another `DataSource`.
+The sim core depends only on `Frame` and `DataSource`. Tonight's sources read Austin's
+parquet files in `data/`: Winter Storm Uri, and a normal winter week to compare it with.
+Another crisis or a live feed is another `DataSource`.
 """
 
 from bisect import bisect_right
@@ -65,34 +66,40 @@ def eea_at(t: datetime) -> EEA:
     return EEA_TIMELINE[k - 1][1] if k else "Normal"
 
 
-class UriParquetSource:
-    """Winter Storm Uri from the parquet files in `data/`: Austin prices and temperature, ERCOT EEA levels."""
+class AustinParquetSource:
+    """Austin's real-time price and temperature from parquet files in `data/`, over one window.
 
-    PRICE_FILE = "ercot_rtm_spp_uri_2021-02.parquet"
-    TEMP_FILE = "austin_temp_hourly_2021-02.parquet"
+    Subclasses name the files, the default window and the windows the insight experiment compares.
+    """
+
+    PRICE_FILE: str
+    TEMP_FILE: str
     # The standard load-zone price, not the energy-weighted `LZ_AEN_EW` (docs/notes.md).
     LOCATION = "LZ_AEN"
     LOCATION_TYPE = "Load Zone"
-
-    DEFAULT_START = datetime(2021, 2, 10, tzinfo=TZ)
-    """Three pre-storm days before prices spike on Feb 13 (the insight experiment compares them)."""
-    DEFAULT_END = datetime(2021, 2, 20, tzinfo=TZ)
-    PRE_STORM = (DEFAULT_START, datetime(2021, 2, 13, tzinfo=TZ))
-    """[start, end) of the insight experiment's pre-storm window."""
-    STORM = (datetime(2021, 2, 14, tzinfo=TZ), datetime(2021, 2, 19, tzinfo=TZ))
-    """[start, end) of its storm window."""
+    DEFAULT_START: datetime
+    DEFAULT_END: datetime
+    TEST_WINDOW: tuple[datetime, datetime]
+    """[start, end) the safe-contract rule judges promise kept over."""
+    PRE_WINDOW: tuple[datetime, datetime] | None = None
+    """[start, end) of a calm stretch before it, to compare; None if there isn't one."""
 
     def __init__(self, data_dir: Path = DATA_DIR) -> None:
         self.data_dir = data_dir
 
-    def frames(self, start: datetime = DEFAULT_START, end: datetime = DEFAULT_END) -> list[Frame]:
-        grid = tick_grid(start, end)
+    def eea(self, t: datetime) -> EEA:
+        """The ERCOT EEA level at `t`."""
+        return "Normal"
+
+    def frames(self, start: datetime | None = None, end: datetime | None = None) -> list[Frame]:
+        """[start, end), by default the source's whole window."""
+        grid = tick_grid(start or self.DEFAULT_START, end or self.DEFAULT_END)
         price = self._prices().reindex(grid)
         require_complete(price, "price")
         temp = self._temps(grid)
         require_complete(temp, "temperature")
         return [
-            Frame(i=i, t=t.to_pydatetime(), price=float(p), temp_f=float(f), eea=eea_at(t))
+            Frame(i=i, t=t.to_pydatetime(), price=float(p), temp_f=float(f), eea=self.eea(t))
             for i, (t, p, f) in enumerate(zip(grid, price, temp, strict=True))
         ]
 
@@ -117,6 +124,37 @@ class UriParquetSource:
         hourly = hourly.reindex(hours)
         require_complete(hourly, "hourly temperature")
         return hourly.reindex(hours.union(grid)).interpolate(method="time").reindex(grid)
+
+
+class UriParquetSource(AustinParquetSource):
+    """Winter Storm Uri, Feb 10-20 2021, with ERCOT's EEA levels."""
+
+    PRICE_FILE = "ercot_rtm_spp_uri_2021-02.parquet"
+    TEMP_FILE = "austin_temp_hourly_2021-02.parquet"
+    DEFAULT_START = datetime(2021, 2, 10, tzinfo=TZ)
+    """Three pre-storm days before prices spike on Feb 13 (the insight experiment compares them)."""
+    DEFAULT_END = datetime(2021, 2, 20, tzinfo=TZ)
+    PRE_STORM = (DEFAULT_START, datetime(2021, 2, 13, tzinfo=TZ))
+    """[start, end) of the insight experiment's pre-storm window."""
+    STORM = (datetime(2021, 2, 14, tzinfo=TZ), datetime(2021, 2, 19, tzinfo=TZ))
+    """[start, end) of its storm window."""
+    TEST_WINDOW = STORM
+    PRE_WINDOW = PRE_STORM
+
+    def eea(self, t: datetime) -> EEA:
+        return eea_at(t)
+
+
+class NormalWeekSource(AustinParquetSource):
+    """A normal winter week, Mon Feb 21 - Sun Feb 27 2022: no EEA (ERCOT declared none between Uri
+    and Sept 2023), and the only Jan-Feb 2022 week whose price reaches the $1,000 call trigger
+    (Feb 24 morning, a moderate cold front). Why this week: docs/notes.md."""
+
+    PRICE_FILE = "ercot_rtm_spp_normal_2022-02.parquet"
+    TEMP_FILE = "austin_temp_hourly_2022-02.parquet"
+    DEFAULT_START = datetime(2022, 2, 21, tzinfo=TZ)
+    DEFAULT_END = datetime(2022, 2, 28, tzinfo=TZ)
+    TEST_WINDOW = (DEFAULT_START, DEFAULT_END)
 
 
 def tick_grid(start: datetime, end: datetime) -> pd.DatetimeIndex:

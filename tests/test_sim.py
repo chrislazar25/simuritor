@@ -2,8 +2,10 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from backend.commitment import UtilityContract
@@ -11,7 +13,7 @@ from backend.data import TICK, TZ, Frame
 from backend.failover import FailoverConfig
 from backend.faults import OUTAGE_END, OUTAGE_START, DeviceTick
 from backend.policy import ContractPolicy, Decisions, FleetView
-from backend.sim import Fleet, FleetConfig, Sim, TickResult, forecast_min_f, read_only, uri_replay
+from backend.sim import Fleet, FleetConfig, Sim, TickResult, build_replay, forecast_min_f, home_sites, read_only
 
 FLOOR = FleetConfig().reserve_floor
 DRAIN_13F = FleetConfig().drain_base_kw + FleetConfig().drain_kw_per_degf * (65 - 13)  # 2.484 kW
@@ -32,6 +34,7 @@ class Scripted:
     kw: list[float] | None = None
     call_kw: list[float] | None = None
     refill_kwh: list[float] | None = None
+    call_ready_kwh: list[float] | None = None
 
     def decide(self, frame: Frame, fleet: FleetView) -> Decisions:
         n = len(self.actions)
@@ -45,6 +48,7 @@ class Scripted:
             kw=kw,
             call_kw=call_kw,
             refill_kwh=refill_kwh,
+            call_ready_kwh=None if self.call_ready_kwh is None else np.array(self.call_ready_kwh),
         )
 
 
@@ -97,6 +101,7 @@ def tiny_sim(
     promised_kw: float | None = None,
     call_kw: list[float] | None = None,
     refill_kwh: list[float] | None = None,
+    call_ready_kwh: list[float] | None = None,
 ) -> Sim:
     """25 kWh `standard` homes with the exact default drain (no noise): `DRAIN_13F` at 13 °F.
 
@@ -110,7 +115,8 @@ def tiny_sim(
     prices = price if isinstance(price, list) else [price] * ticks
     frames = [Frame(i=k, t=ct(15, 12) + k * TICK, price=p, temp_f=temp_f, eea="EEA3") for k, p in enumerate(prices)]
     contract = None if promised_kw is None else UtilityContract(nameplate_mw=promised_kw / 1000, size_frac=1.0)
-    return Sim(frames, fleet, Scripted(actions, kw, call_kw, refill_kwh), [GridDown(down or [False] * n)], contract)
+    policy = Scripted(actions, kw, call_kw, refill_kwh, call_ready_kwh)
+    return Sim(frames, fleet, policy, [GridDown(down or [False] * n)], contract)
 
 
 def test_discharge_is_12kw_and_stops_at_the_floor() -> None:
@@ -239,6 +245,19 @@ def test_backup_cost_is_charging_up_to_the_policys_refill_level() -> None:
     assert r.revenue_usd == pytest.approx(-6 * 9)
 
 
+def test_call_ready_charging_is_a_contract_cost() -> None:
+    """As above, with call-ready levels 1.5 kWh above home 0's refill level and at home 1's: home 0's
+    other 1.5 kWh now goes to the contract, not the market."""
+    sim = tiny_sim(
+        soc=[0.10, 0.50], actions=["charge", "charge"], price=9000.0, refill_kwh=[4.0, 20.0], call_ready_kwh=[5.5, 20.0]
+    )
+    r = sim.step()
+    assert r.backup_cost_usd == pytest.approx(4.5 * 9)
+    assert r.contract_pnl_usd == pytest.approx(-1.5 * 9)
+    assert r.market_usd == pytest.approx(0.0, abs=1e-9)
+    assert r.revenue_usd == pytest.approx(-6 * 9)
+
+
 def test_headroom_sold_is_export_beyond_the_call_share() -> None:
     """3 kWh exported each. Home 0 has a 4 kW call share, so 2 kWh of it is headroom; home 1 has
     no share, so all 3 kWh is."""
@@ -355,16 +374,16 @@ def run(sim: Sim) -> list[TickResult]:
 @pytest.fixture(scope="module")
 def replay() -> list[TickResult]:
     """ContractPolicy under the default 60% contract."""
-    return run(uri_replay(seed=0))
+    return run(build_replay(seed=0))
 
 
 @pytest.fixture(scope="module")
 def fleet() -> Fleet:
-    return uri_replay(seed=0).fleet
+    return build_replay(seed=0).fleet
 
 
 def test_fleet_matches_the_spec_mix() -> None:
-    fleet = uri_replay(seed=0).fleet
+    fleet = build_replay(seed=0).fleet
     assert len(fleet) == 500 and len(set(fleet.ids)) == 500
     assert (fleet.capacity_kwh == 25.0).sum() == 300 and (fleet.capacity_kwh == 39.2).sum() == 200
     assert {h: int((fleet.household == h).sum()) for h in ("standard", "medical", "elderly", "wfh")} == {
@@ -378,9 +397,31 @@ def test_fleet_matches_the_spec_mix() -> None:
     assert ((-97.90 <= fleet.lon) & (fleet.lon <= -97.60)).all()
 
 
+def test_homes_sit_on_distinct_real_building_sites(fleet: Fleet) -> None:
+    sites = {tuple(site) for site in home_sites(FleetConfig().homes_file).tolist()}
+    placed = set(zip(fleet.lat.tolist(), fleet.lon.tolist(), strict=True))
+    assert len(placed) == 500 and placed <= sites
+
+
+def test_without_the_homes_file_homes_are_placed_at_random(tmp_path: Path) -> None:
+    uniform = Fleet(FleetConfig(n_homes=200, homes_file=None), np.random.default_rng(0))
+    missing = Fleet(FleetConfig(n_homes=200, homes_file=tmp_path / "none.parquet"), np.random.default_rng(0))
+    assert np.array_equal(uniform.lat, missing.lat) and np.array_equal(uniform.lon, missing.lon)
+    expected = np.random.default_rng(0).uniform(30.15, 30.45, 200)  # the layout before real sites
+    assert np.array_equal(uniform.lat, expected)
+    assert len(np.unique(uniform.feeder)) == 40
+
+
+def test_more_homes_than_sites_is_an_error(tmp_path: Path) -> None:
+    path = tmp_path / "homes.parquet"
+    pd.DataFrame({"lat": [30.2, 30.3], "lon": [-97.7, -97.8]}).to_parquet(path)
+    with pytest.raises(ValueError, match="only 2 sites"):
+        Fleet(FleetConfig(n_homes=3, homes_file=path), np.random.default_rng(0))
+
+
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_tier_mix_is_exact_and_medical_is_critical(seed: int) -> None:
-    fleet = uri_replay(seed=seed).fleet
+    fleet = build_replay(seed=seed).fleet
     assert {t: int((fleet.tier == t).sum()) for t in ("none", "standard", "critical")} == {
         "none": 50,
         "standard": 400,
@@ -399,12 +440,12 @@ def test_more_medical_homes_than_critical_slots_grows_critical() -> None:
 
 
 def test_same_seed_same_replay(replay: list[TickResult]) -> None:
-    again = run(uri_replay(seed=0))
+    again = run(build_replay(seed=0))
     for a, b in zip(replay, again, strict=True):
         assert np.array_equal(a.soc, b.soc) and np.array_equal(a.action, b.action)
     assert again[-1].revenue_usd == replay[-1].revenue_usd
-    other = uri_replay(seed=1)
-    assert not np.array_equal(other.fleet.soc, uri_replay(seed=0).fleet.soc)
+    other = build_replay(seed=1)
+    assert not np.array_equal(other.fleet.soc, build_replay(seed=0).fleet.soc)
 
 
 def test_soc_stays_in_bounds(replay: list[TickResult]) -> None:
@@ -451,7 +492,10 @@ def test_rolling_outage_keeps_46_percent_out_and_homes_cycle(replay: list[TickRe
     assert np.mean(off) == pytest.approx(230, rel=0.05)  # RollingOutage: 46% on average
     grid = np.array([r.grid for r in during])
     cycled = (grid.any(axis=0) & ~grid.all(axis=0)).sum()
-    assert cycled == 450  # every rotating home is on grid at some point in the window, and off at another
+    never = (~grid.any(axis=0)).sum()
+    # Every rotating home is on grid at some point in the window, and off at another; the rest
+    # (whole feeders, ~10%) never come back.
+    assert cycled + never == 500 and never == pytest.approx(50, abs=15)
 
 
 def test_fleet_stats_agree_with_homes(replay: list[TickResult]) -> None:
@@ -483,7 +527,7 @@ def test_precharge_fills_the_fleet_before_the_storm() -> None:
     """
     at_13 = []
     for precharge in (True, False):
-        sim = uri_replay(seed=0, contract_size=None)
+        sim = build_replay(seed=0, contract_size=None)
         sim.policy = ContractPolicy(precharge=precharge, headroom_mode="sell")
         at_13.append(next(r for r in run(sim) if r.frame.t == ct(13)).soc.mean())
     assert at_13[0] > 0.8 and at_13[1] < 0.6
@@ -501,8 +545,8 @@ def test_calls_follow_the_contract_rules(replay: list[TickResult]) -> None:
 
 
 def test_emergency_uncapped_calls_more_during_the_eea() -> None:
-    capped = sum(r.utility_call for r in run(uri_replay(seed=0)))
-    uncapped = sum(r.utility_call for r in run(uri_replay(seed=0, emergency_uncapped=True)))
+    capped = sum(r.utility_call for r in run(build_replay(seed=0)))
+    uncapped = sum(r.utility_call for r in run(build_replay(seed=0, emergency_uncapped=True)))
     assert uncapped > 2 * capped
 
 
@@ -510,7 +554,7 @@ def test_emergency_uncapped_calls_more_during_the_eea() -> None:
 def naive_replay() -> list[TickResult]:
     """The naive baseline, on the market alone (no utility contract, no device faults: a home
     hard-faulted before Feb 11 can't sell its reserve, so it wouldn't be dark by Feb 15)."""
-    return run(uri_replay(seed=0, policy="naive", contract_size=None, fault_rate=0.0))
+    return run(build_replay(seed=0, policy="naive", contract_size=None, fault_rate=0.0))
 
 
 def test_naive_baseline_sells_the_reserve_then_buys_it_back_at_crisis_prices(
@@ -537,7 +581,7 @@ def test_naive_baseline_sells_the_reserve_then_buys_it_back_at_crisis_prices(
     assert end_of_11 > 0 > end_of_outage
     assert all(r.frame.price >= 1000 for r in replay if r.revenue_tick_usd < 0 and ct(12) <= r.frame.t < ct(19))
 
-    sim = uri_replay(seed=0)
+    sim = build_replay(seed=0)
     never_restored = (sim.faults[0].group < 0) & (fleet.tier != "none")  # `none` keeps its energy
     at_noon = next(r for r in replay if r.frame.t == ct(15, 12))
     assert (at_noon.soc[never_restored] == 0).all()  # dark within 10 hours
@@ -557,19 +601,53 @@ def test_failover_counts_add_up_over_the_replay(replay: list[TickResult]) -> Non
 
 
 def test_without_device_faults_every_failover_is_a_home_losing_the_grid_next_tick() -> None:
-    replay = run(uri_replay(seed=0, fault_rate=0.0))
+    replay = run(build_replay(seed=0, fault_rate=0.0))
     events = [(r, n, f) for r, n in zip(replay, replay[1:]) for f in r.failovers]
     assert events and all(r.grid[f.home] and not n.grid[f.home] for r, n, f in events)
 
 
 def test_keep_sells_no_headroom_and_sell_sells_it_at_the_export_price(replay: list[TickResult]) -> None:
     assert sum(r.headroom_sold_mwh for r in replay) == 0
-    sell = run(uri_replay(seed=0, policy_options={"headroom_mode": "sell"}))
+    sell = run(build_replay(seed=0, policy_options={"headroom_mode": "sell"}))
     assert sum(r.headroom_sold_mwh for r in sell) > 1
     assert all(r.frame.price >= ContractPolicy().export_at_usd for r in sell if r.headroom_sold_mwh > 0)
 
 
+def test_the_policys_failure_domains_are_the_rotation_groups(replay: list[TickResult]) -> None:
+    """The never-restored set is one more domain. Spreading by domain changes how calls are split,
+    not when the utility calls."""
+    sim = build_replay(seed=0)
+    assert sim.domain is not None and np.array_equal(sim.domain, sim.faults[0].group)
+    spread = run(build_replay(seed=0, policy_options={"spread_by_domain": True}))
+    assert [r.utility_call for r in spread] == [r.utility_call for r in replay]
+    assert spread[-1].promise_kept != replay[-1].promise_kept
+
+
 def test_contract_policy_leaves_fewer_homes_dark_than_naive(replay: list[TickResult]) -> None:
     """Same fleet, outages and 60% contract: keeping the reserve halves the home-hours dark (ran out)."""
-    naive = run(uri_replay(seed=0, policy="naive"))
+    naive = run(build_replay(seed=0, policy="naive"))
     assert sum(r.homes_dark for r in replay) < 0.6 * sum(r.homes_dark for r in naive)
+
+
+# --- The normal winter week ------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def normal_week() -> list[TickResult]:
+    return run(build_replay("normal", seed=0))
+
+
+def test_normal_week_is_a_week_on_grid_with_no_emergency(normal_week: list[TickResult]) -> None:
+    assert len(normal_week) == 7 * 96
+    assert normal_week[0].frame.t == datetime(2022, 2, 21, tzinfo=TZ)
+    assert all(r.homes_on_grid == 500 and r.frame.eea == "Normal" for r in normal_week)
+    sim = build_replay("normal", seed=0)
+    assert sim.faults == [] and sim.domain is not None  # nothing rotates, but the blocks exist
+    assert set(sim.domain.tolist()) == {-1, 0, 1, 2, 3, 4}
+
+
+def test_normal_week_has_one_call_on_feb_24_and_keeps_it(normal_week: list[TickResult]) -> None:
+    """The price reaches $1,000 twice: Feb 23 23:15 (outside the call window) and Feb 24 from 06:15."""
+    called = [r for r in normal_week if r.utility_call]
+    assert [r.frame.t for r in called] == [datetime(2022, 2, 24, 6, 15, tzinfo=TZ) + k * TICK for k in range(6)]
+    assert all(r.kept for r in called)

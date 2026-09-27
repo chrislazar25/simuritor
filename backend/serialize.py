@@ -7,6 +7,7 @@ and MW stay exact so the fleet stats keep adding up from the per-home values.
 """
 
 import math
+from collections.abc import Sequence
 
 from backend.data import TICK, Frame
 from backend.schema import (
@@ -16,22 +17,32 @@ from backend.schema import (
     HomeState,
     InitMessage,
     ReplayParams,
-    ScenarioParams,
+    ScenarioName,
+    SweepParams,
     TickMessage,
 )
-from backend.sim import Fleet, FleetConfig, Sim, TickResult, uri_replay
+from backend.sim import Fleet, FleetConfig, Sim, TickResult, build_replay
 
 
-def build_sim(params: ScenarioParams, contract: float | None, seed: int = 0, frames: list[Frame] | None = None) -> Sim:
-    """A replay of `params.scenario` with a utility contract of `contract` x nameplate (None: no contract)."""
-    return uri_replay(
+def build_sim(
+    params: SweepParams,
+    scenario: ScenarioName,
+    contract: float | None,
+    seed: int = 0,
+    frames: Sequence[Frame] | None = None,
+) -> Sim:
+    """A replay of `scenario` with a utility contract of `contract` x nameplate (None: no contract)."""
+    return build_replay(
+        scenario=scenario,
         seed=seed,
         config=FleetConfig(n_homes=params.homes).with_backup_hours("standard", params.standard_backup_h),
         frames=frames,
         policy=params.policy,
         contract_size=contract,
         fault_rate=params.fault_rate,
-        policy_options={"headroom_mode": params.headroom_mode} if params.policy == "contract" else None,
+        policy_options={"headroom_mode": params.headroom_mode, "spread_by_domain": params.spread_by_domain}
+        if params.policy == "contract"
+        else None,
         max_calls_per_day=params.max_calls_per_day,
         emergency_uncapped=params.emergency_uncapped,
         skip_before_storm=params.skip_before_storm,
@@ -40,7 +51,7 @@ def build_sim(params: ScenarioParams, contract: float | None, seed: int = 0, fra
 
 def replay_sim(params: ReplayParams) -> Sim:
     """The replay a /ws connection with these params plays."""
-    return build_sim(params, params.contract)
+    return build_sim(params, params.scenario, params.contract)
 
 
 def init_message(sim: Sim, params: ReplayParams) -> InitMessage:

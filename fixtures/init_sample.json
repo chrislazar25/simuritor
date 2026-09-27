@@ -12,6 +12,7 @@
     "fault_rate": 0.001,
     "headroom_mode": "keep",
     "homes": 20,
+    "spread_by_domain": false,
     "scenario": "uri",
     "contract": 0.6
   },

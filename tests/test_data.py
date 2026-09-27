@@ -1,4 +1,4 @@
-"""The Uri data source: EEA timeline, frames from the parquet files, and loud failures."""
+"""The data sources: Uri's EEA timeline and frames, the normal winter week, and loud failures."""
 
 import math
 import shutil
@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from backend.data import DATA_DIR, EEA_TIMELINE, TICK, TZ, Frame, UriParquetSource, eea_at
+from backend.data import DATA_DIR, EEA_TIMELINE, TICK, TZ, Frame, NormalWeekSource, UriParquetSource, eea_at
 
 
 def ct(month_day: str, hh_mm: str = "00:00") -> datetime:
@@ -125,3 +125,23 @@ def test_temperature_gap_raises(tmp_path: Path) -> None:
     data = copy_data_dropping(tmp_path, UriParquetSource.TEMP_FILE, "time", ct("16", "08:00"))
     with pytest.raises(ValueError, match="hourly temperature: 1 missing"):
         UriParquetSource(data).frames()
+
+
+# --- NormalWeekSource --------------------------------------------------------------
+
+
+def test_normal_week_is_mon_feb_21_to_sun_feb_27_2022_with_no_emergency() -> None:
+    frames = NormalWeekSource().frames()
+    assert len(frames) == 7 * 96
+    assert frames[0].t == datetime(2022, 2, 21, tzinfo=TZ) and frames[0].t.weekday() == 0
+    assert frames[-1].t == datetime(2022, 2, 27, 23, 45, tzinfo=TZ)
+    assert all(b.t - a.t == TICK for a, b in pairwise(frames))
+    assert {f.eea for f in frames} == {"Normal"}
+    assert not any(math.isnan(f.price) or math.isnan(f.temp_f) for f in frames)
+
+
+def test_normal_week_reaches_the_call_trigger_only_on_feb_23_24() -> None:
+    spikes = [f for f in NormalWeekSource().frames() if f.price >= 1000]
+    assert {f.t.date().isoformat() for f in spikes} == {"2022-02-23", "2022-02-24"}
+    assert max(f.price for f in spikes) == 4069.15
+    assert min(f.temp_f for f in NormalWeekSource().frames()) > 25  # cold, not Uri

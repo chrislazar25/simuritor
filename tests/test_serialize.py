@@ -9,7 +9,7 @@ from backend.serialize import init_message, replay_sim, tick_message
 
 @pytest.fixture(scope="module")
 def messages() -> tuple[InitMessage, list[TickMessage]]:
-    params = ReplayParams()
+    params = ReplayParams(homes=500)
     sim = replay_sim(params)
     init = init_message(sim, params)
     ticks = []
@@ -23,7 +23,7 @@ def test_init_describes_the_replay(messages: tuple[InitMessage, list[TickMessage
     assert init.n_ticks == len(ticks) == 960
     assert init.start == ticks[0].t and init.end == ticks[-1].t + TICK
     assert len({h.id for h in init.homes}) == len(init.homes) == init.params.homes == 500
-    assert init.params == ReplayParams()
+    assert init.params == ReplayParams(homes=500)
     assert all(h.tier == "critical" for h in init.homes if h.household == "medical")
     assert sum(h.tier == "none" for h in init.homes) == sum(h.tier == "critical" for h in init.homes) == 50
 
@@ -68,3 +68,9 @@ def test_every_tick_keeps_the_contract_consistent(messages: tuple[InitMessage, l
     last = ticks[-1].fleet
     assert last.promise_kept is not None and last.penalty_usd > 0
     assert warned > 0 and silent > 0
+
+
+@pytest.mark.parametrize("spread", [True, False])
+def test_replay_params_reach_the_contract_policy(spread: bool) -> None:
+    sim = replay_sim(ReplayParams(homes=20, headroom_mode="sell", spread_by_domain=spread))
+    assert (sim.policy.headroom_mode, sim.policy.spread_by_domain) == ("sell", spread)

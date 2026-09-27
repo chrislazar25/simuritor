@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from backend.schema import InitMessage, ReplayParams, ScenarioParams, TickMessage, client_message, server_message
+from backend.schema import InitMessage, ReplayParams, SweepParams, TickMessage, client_message, server_message
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "fixtures"
@@ -82,13 +82,16 @@ def test_replay_params_default_and_parse_query_strings() -> None:
         "skip_before_storm": False,
         "fault_rate": 0.001,
         "headroom_mode": "keep",
-        "homes": 500,
+        "homes": 3000,
+        "spread_by_domain": False,
         "scenario": "uri",
         "contract": 0.3,
     }
-    query = {"contract": "0.1", "homes": "50", "emergency_uncapped": "true", "headroom_mode": "sell"}
+    query = {"contract": "0.1", "homes": "50", "emergency_uncapped": "true", "headroom_mode": "sell",
+             "spread_by_domain": "true"}
     params = ReplayParams.model_validate(query)
     assert (params.contract, params.homes, params.emergency_uncapped, params.headroom_mode) == (0.1, 50, True, "sell")
+    assert params.spread_by_domain
 
 
 @pytest.mark.parametrize(
@@ -106,6 +109,7 @@ def test_replay_params_default_and_parse_query_strings() -> None:
         {"standard_backup_h": "-1"},
         {"max_calls_per_day": "-1"},
         {"skip_before_storm": "maybe"},
+        {"spread_by_domain": "sometimes"},
         {"colour": "red"},
     ],
 )
@@ -114,9 +118,14 @@ def test_invalid_replay_params(query: dict[str, str]) -> None:
         ReplayParams.model_validate(query)
 
 
-def test_scenario_params_have_no_contract() -> None:
+@pytest.mark.parametrize("field", ["contract", "scenario"])
+def test_sweep_params_have_no_contract_or_scenario(field: str) -> None:
     with pytest.raises(ValidationError):
-        ScenarioParams.model_validate({"contract": "0.3"})
+        SweepParams.model_validate({field: "0.3" if field == "contract" else "uri"})
+
+
+def test_replay_params_take_either_scenario() -> None:
+    assert ReplayParams.model_validate({"scenario": "normal"}).scenario == "normal"
 
 
 @pytest.mark.parametrize(
