@@ -54,7 +54,7 @@ export function Charts({ init, history }: { init: InitMessage | null; history: T
           type="number"
           domain={[0, init.n_ticks - 1]}
           ticks={midnights}
-          interval={0}
+          minTickGap={20}
           tickFormatter={(i: number) => formatDay(new Date(start + i * TICK_MS))}
           stroke={muted}
           fontSize={11}
@@ -68,14 +68,14 @@ export function Charts({ init, history }: { init: InitMessage | null; history: T
           ifOverflow="extendDomain"
           stroke={muted}
           strokeDasharray="4 4"
-          label={{ ...marker, value: 'sell ≥ $1k', position: 'insideBottomRight' }}
+          label={{ ...marker, value: '$1k price reference', position: 'insideBottomRight' }}
         />
-        <ReferenceLine
+        {outageTick >= 0 && outageTick < init.n_ticks && <ReferenceLine
           yAxisId="price"
           x={outageTick}
           stroke={cssVar('--grid-off')}
           label={{ ...marker, value: 'outages', position: 'insideTopRight' }}
-        />
+        />}
         {hasContract && (
           <Area
             yAxisId="mw"

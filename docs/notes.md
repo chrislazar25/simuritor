@@ -174,3 +174,11 @@
 - Serializer speed: step + serialize + JSON is ~1.9 ms/tick at 500 homes (mostly Pydantic building 500 `HomeState`s). Fine at 64 ticks/s; at 2,000+ homes consider `model_construct` or serializing straight from arrays.
 - Physics invariants (e.g. `discharge` ⇒ grid up, `backup` ⇒ grid down, `charge` ⇒ grid up). Define once and reuse for sim tests and optionally the wire models, rather than duplicating.
 - TS generator deps: `gen_types` runs `json-schema-to-typescript` via `npx` (tool pinned, its deps not). If `--check` ever reports `types.ts` stale with only formatting diffs (a prettier release), make it a pinned devDependency in `frontend/package.json` and run the local bin.
+
+## UI review (Sep 27)
+- Contract terms now expose the historical scenario. Draft edits reset the replay only when applied.
+- The contract comparison opens in an accessible dialog with both scenarios, actual kept percentages, the sweep ceiling, and a direct apply action. No-call cases read "Not exercised" and cannot be applied as evidence of reliability.
+- The UI says "qualifying" rather than recommending a real contract. The README now distinguishes 95.6% kept in Uri from 100%, and notes perfect weather foresight and modeled recovery delays.
+- Live delivery, promised power, intervals kept and backup states are visible together; modeled cash flow is expandable. Replay context and progress explain the paused starting state.
+- Small or short viewports use a scrolling instrument grid instead of overlapping floating panels. Desktop panels remain draggable and resizable.
+- Playwright Chromium review exercised live Uri playback, the default 15% result, applying results, scenario switching, Escape/close behavior, panel visibility, and no-call cases. Checked 1440×900, 1366×768 and 390×844 layouts; no horizontal overflow at the phone width.

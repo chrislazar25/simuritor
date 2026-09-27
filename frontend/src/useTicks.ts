@@ -4,7 +4,8 @@ import type { ClientMessage, FailoverEvent, InitMessage, ServerMessage, TickMess
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
 
 /** The few numbers per tick the chart needs. Keeping whole ticks would hold 672 × 500 homes. */
-export type TickPoint = Pick<TickMessage, 'i' | 't' | 'price'> & Pick<TickMessage['fleet'], 'promised_mw' | 'delivered_mw'>
+export type TickPoint = Pick<TickMessage, 'i' | 't' | 'price'> &
+  Pick<TickMessage['fleet'], 'promised_mw' | 'delivered_mw'>
 
 /** A failover event with the tick it arrived in; `seq` is a stable key (events carry no id). */
 export type LoggedFailover = FailoverEvent & { t: string; seq: number }
@@ -28,8 +29,8 @@ function socketUrl(path: string): string {
  * (`/ws?contract=0.1`); a new path is a new session. If the server rejects the params it closes
  * with a reason, which lands in `rejected`, and there's no retry.
  *
- * `history` has one point per tick received since the last `init`. It's appended
- * per message, not per render, so no tick is lost when React batches fast ticks.
+ * `history` has one point per tick received since the last `init`. Points are collected
+ * per message and painted in batches, so no point is lost during fast playback.
  * `failovers` is the last few failover events, newest first, kept the same way.
  *
  * `playing` mirrors the server's play state, which it never sends: play/pause
@@ -54,6 +55,34 @@ export function useTicks(path = '/ws') {
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     let nTicks = 0
     let seq = 0
+    let frame: number | undefined
+    let latest: TickMessage | null = null
+    let points: TickPoint[] = []
+    let events: LoggedFailover[] = []
+
+    function clearPending() {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      frame = undefined
+      latest = null
+      points = []
+      events = []
+    }
+
+    // In a fast replay, consume queued messages before painting again. Every chart point
+    // and recent failover is retained, but intermediate map renders can be skipped.
+    function paint() {
+      frame = undefined
+      if (disposed || !latest) return
+      const nextPoints = points
+      const nextEvents = events
+      setTick(latest)
+      setHistory((h) => [...h, ...nextPoints])
+      if (nextEvents.length > 0) setFailovers((f) => [...nextEvents, ...f].slice(0, FAILOVER_LOG_SIZE))
+      if (latest.i === nTicks - 1) setPlaying(false)
+      latest = null
+      points = []
+      events = []
+    }
 
     function connect() {
       setStatus('connecting')
@@ -70,6 +99,7 @@ export function useTicks(path = '/ws') {
         switch (msg.type) {
           case 'init':
             // A new init starts a new replay (connect or reset); the old tick no longer applies.
+            clearPending()
             nTicks = msg.n_ticks
             setInit(msg)
             setTick(null)
@@ -78,23 +108,20 @@ export function useTicks(path = '/ws') {
             setPlaying(false)
             break
           case 'tick':
-            setTick(msg)
-            setHistory((h) => [
-              ...h,
-              {
-                i: msg.i,
-                t: msg.t,
-                price: msg.price,
-                promised_mw: msg.fleet.promised_mw,
-                delivered_mw: msg.fleet.delivered_mw,
-              },
-            ])
+            latest = msg
+            points.push({
+              i: msg.i,
+              t: msg.t,
+              price: msg.price,
+              promised_mw: msg.fleet.promised_mw,
+              delivered_mw: msg.fleet.delivered_mw,
+            })
             if (msg.failovers.length > 0) {
               // Events arrive oldest first within a tick; the log is newest first.
               const logged = msg.failovers.map((e) => ({ ...e, t: msg.t, seq: seq++ })).reverse()
-              setFailovers((f) => [...logged, ...f].slice(0, FAILOVER_LOG_SIZE))
+              events = [...logged, ...events].slice(0, FAILOVER_LOG_SIZE)
             }
-            if (msg.i === nTicks - 1) setPlaying(false)
+            if (frame === undefined) frame = requestAnimationFrame(paint)
             break
         }
       }
@@ -115,6 +142,7 @@ export function useTicks(path = '/ws') {
     connect()
     return () => {
       disposed = true
+      clearPending()
       clearTimeout(retryTimer)
       socket.current?.close()
     }

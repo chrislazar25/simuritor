@@ -76,7 +76,7 @@ export function FloatingPanel({
 
   // Pointer capture keeps the gesture on this element even when the pointer outruns the panel.
   function startGesture(e: ReactPointerEvent<HTMLElement>, kind: 'move' | 'resize') {
-    if (expanded || e.button !== 0) return
+    if (expanded || e.button !== 0 || window.matchMedia('(max-width: 1100px), (max-height: 780px)').matches) return
     if ((e.target as HTMLElement).closest('button')) return
     const el = e.currentTarget
     const start = { px: e.clientX, py: e.clientY, rect }

@@ -6,9 +6,9 @@ Built in 36 hours for the Base Power × AITX hackathon (tracks: **Orchestration*
 
 > **How much can a Base-sized fleet safely promise a utility if Winter Storm Uri happens again?**
 >
-> - In a normal winter week, **60%** of its power keeps every call.
-> - In Uri, only **15%** does.
-> - The safe promise shrinks **4×**, and it's *energy*, not failover speed, that runs out.
+> - In the comparison winter week, contracts through **60%** of fleet power pass our reliability threshold; 60% is the largest size tested.
+> - In Uri, **15%** is the largest tested size that passes, keeping **95.6%** of called storm intervals on average.
+> - That's a **4× difference between the qualifying sizes in this experiment**. Under these assumptions, energy runs out even when every failover is covered.
 
 ![Promise kept vs contract size: normal winter week, Uri pre-storm and storm](docs/img/safe-contract.png)
 
@@ -30,12 +30,12 @@ A deterministic dispatch policy keeps both promises. Failover runs on a **second
 - the controller detects them from 2-second heartbeats;
 - it moves their load onto the healthy homes with the most spare capacity.
 
-**The tool part.** A live map and HUD show all of this. A **Contract terms** panel lets you change the contract and click **Find safe contract**: in seconds it replays every contract size against Uri and a normal week, and tells you the largest you can sign.
+**The tool part.** A live map and HUD show all of this. The **Contract terms** panel lets you switch scenarios and policies, change backup hours, and **Find qualifying contract**: it tests sizes from 5–60% against Uri and a normal week. Each result shows the largest size meeting the scenario criteria and can be applied to the replay. These are model results, not recommendations to sign a real utility contract.
 
 ## Findings
 3,000 homes; means over seeds 0–2 unless noted. Reproduce with `scripts/sweep.py` and `scripts/plots.py`. Full tables are in [`docs/notes.md`](docs/notes.md).
 
-**1. The safe contract shrinks 4× in a Uri.** Promise kept (called intervals delivered within 2%), device faults 0.001/home-hour:
+**1. The qualifying sizes differ by 4× in this experiment.** Promise kept (called intervals delivered within 2%), device faults 0.001/home-hour:
 
 | Contract (% of fleet power) | Normal winter week | Uri storm (Feb 14–18) |
 |---|---|---|
@@ -44,10 +44,10 @@ A deterministic dispatch policy keeps both promises. Failover runs on a **second
 | 30% | 100% | 61.1% |
 | 60% | 100% | 23.3% |
 
-The "Find safe contract" rule is the largest size keeping ≥ 95%. By that rule: **15% in Uri, 60% in the normal week.** The normal week (Feb 21–27, 2022) and Uri's pre-storm days each contain a single call, so read "100%" there as comfortable, not proven.
+The qualification rule is the largest tested size keeping ≥ 95% of called intervals on average over three seeds, with no more critical homes running out than in the no-contract baseline. By that rule: **15% in Uri, 60% in the normal week.** The comparison week (Feb 21–27, 2022) contains just one call under default terms; its 100% result does not establish general reliability. Sizes are sampled in 5-percentage-point steps, and the normal-week result reaches the sweep ceiling. The API treats no-call cases as vacuously kept; the UI labels these **Not exercised** and offers no apply action.
 
 **2. Energy runs out before failover does.**
-- Failover holds: at 10%, **1,344 failovers** in the replay, **0 uncovered**, covered in **5 s** (warned) / **11 s** (silent) against a 60 s target.
+- Failover holds in the model: at 10%, **1,344 failovers** in the replay, **0 uncovered**. Recovery delays are configured as **5 s** (warned) / **11 s** (silent), against a 60 s target; they are not measured device latencies.
 - At 20% there are still **no uncovered failovers**, yet 11% of storm calls miss. The fleet simply doesn't have the energy.
 - The backup reserve grows as it gets colder, calls come at the same time, and both draw on the same kWh. Correlated neighbourhood cuts (a rotation block is ~540 homes) only beat failover from 30% up.
 
@@ -87,6 +87,8 @@ A 4 h reserve moves Uri's safe contract from 15% to **25%**. Every hour of backu
 ![Storm promise kept and uncovered failovers, default split vs spread by outage block](docs/img/failure-domains.png)
 
 **Honest limits:**
+- **Controller knowledge:** planning uses actual future temperatures as a perfect forecast. The failover model excludes replacement homes that will drop out later in the same tick. Forecast error and cascading replacement failures are not modeled yet.
+- **Qualification:** three fleet seeds under one historical crisis do not establish a real fleet's reliability. Outages, household loads and several contract terms are synthetic assumptions. The qualifying size is neither a profitability optimum nor a guarantee of uninterrupted backup.
 - **Money:** the sim isn't a business P&L. It doesn't model Base's retail revenue or the homes' normal grid load, and the capacity payment is a placeholder.
   - What it does show: at Uri prices, **keeping homeowners' backup and staying ready for the next call both mean buying energy at ~$9,000/MWh**, far more than any capacity fee.
   - The policy also buys the next call's energy too early: right after the day's call, although no call can come until tomorrow. That's the next fix.
@@ -133,7 +135,7 @@ A 4 h reserve moves Uri's safe contract from 15% to **25%**. Every hour of backu
 | Same at 10,000 homes | ~3 s |
 | Live streaming at 3,000 homes | 56 ticks/s |
 | The insight sweep (102 runs) | ~19 s |
-| "Find safe contract" (78 replays) | ~12 s cold; the default terms are precomputed at startup |
+| "Find qualifying contract" (78 replays) | ~12 s cold; the default terms are precomputed at startup |
 
 **Tests:** 241.
 
@@ -185,7 +187,11 @@ cd frontend && npm install && npm run dev          # http://localhost:5173
 
 The replay runs with the terms in the URL, e.g. `/?policy=naive&contract=0.1`. The Contract terms panel writes them for you.
 
-<!-- TODO: in-app controls (play/pause/speed/reset, H hides panels) -->
+Use **Play**, **Pause**, the speed selector (ticks per second), and **Reset** to control the replay. **Hide panels** or the **H** key reveals the map. On large screens panels can be dragged, resized, or expanded; smaller screens use a scrolling layout. Contract edits are drafts until **Apply & reset**; evaluating draft terms does not change the map. Applying a qualifying result switches to its scenario and resets the replay, ready for Play.
+
+The comparison opens in a dialog with both scenario results and the qualification criteria; **Escape** closes it. The Fleet panel emphasizes delivery and backup, with modeled cash flow under an expandable section. For a guided walkthrough, see [`docs/demo.md`](docs/demo.md).
+
+The current frontend requires the live backend for both replay and contract evaluation. A static frontend deployment alone does not provide either feature; recorded playback is planned. No API keys or environment variables are required for local use; the basemap needs internet access.
 
 Headless:
 ```bash

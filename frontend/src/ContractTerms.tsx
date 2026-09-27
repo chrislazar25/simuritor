@@ -4,7 +4,15 @@ import { formatTerm, type TermSpec, type Terms, termsSummary, visibleTerms } fro
 import type { InitMessage } from './types.ts'
 
 /** A number box that lets you type through in-between states ("0.0"); only valid numbers go up. */
-function NumberField({ spec, value, onChange }: { spec: Extract<TermSpec, { kind: 'number' }>; value: number; onChange: (v: number) => void }) {
+function NumberField({
+  spec,
+  value,
+  onChange,
+}: {
+  spec: Extract<TermSpec, { kind: 'number' }>
+  value: number
+  onChange: (v: number) => void
+}) {
   const [text, setText] = useState(String(value))
   // Follow a value set from outside (a new init, Undo); values we sent ourselves are already `seen`.
   const [seen, setSeen] = useState(value)
@@ -21,6 +29,11 @@ function NumberField({ spec, value, onChange }: { spec: Extract<TermSpec, { kind
         max={spec.max}
         step={spec.step}
         value={text}
+        onInvalid={(e) => {
+          // Native validation can target an input inside the collapsed advanced section.
+          const details = e.currentTarget.closest('details')
+          if (details) details.open = true
+        }}
         onChange={(e) => {
           setText(e.target.value)
           const n = e.target.valueAsNumber
@@ -36,11 +49,23 @@ function NumberField({ spec, value, onChange }: { spec: Extract<TermSpec, { kind
 }
 
 /** One knob, drawn as its spec says. `was` is the running value when the draft differs from it. */
-function Term({ spec, value, was, onChange }: { spec: TermSpec; value: unknown; was: string | null; onChange: (v: unknown) => void }) {
+function Term({
+  spec,
+  value,
+  was,
+  onChange,
+}: {
+  spec: TermSpec
+  value: unknown
+  was: string | null
+  onChange: (v: unknown) => void
+}) {
   const label = (
     <span className="term-label" title={spec.hint}>
       {spec.label}
-      {was !== null && <span className="term-changed" title={`Running: ${was}`} aria-label={`changed, running ${was}`} />}
+      {was !== null && (
+        <span className="term-changed" title={`Running: ${was}`} aria-label={`changed, running ${was}`} />
+      )}
     </span>
   )
   switch (spec.kind) {
@@ -87,7 +112,13 @@ function Term({ spec, value, was, onChange }: { spec: TermSpec; value: unknown; 
       return (
         <label className="term">
           {label}
-          <input type="checkbox" className="switch" role="switch" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
+          <input
+            type="checkbox"
+            className="switch"
+            role="switch"
+            checked={Boolean(value)}
+            onChange={(e) => onChange(e.target.checked)}
+          />
         </label>
       )
   }
@@ -141,6 +172,16 @@ export function ContractTerms({
 
   const specs = visibleTerms(draft)
   const changed = specs.some((s) => draft[s.key] !== active[s.key])
+  const primary = ['scenario', 'policy', 'contract', 'standard_backup_h', 'skip_before_storm']
+  const field = (spec: TermSpec) => (
+    <Term
+      key={spec.key}
+      spec={spec}
+      value={draft[spec.key]}
+      was={draft[spec.key] === active[spec.key] ? null : formatTerm(spec, active[spec.key])}
+      onChange={(v) => setDraft({ ...draft, [spec.key]: v })}
+    />
+  )
   return (
     <form
       className="terms"
@@ -149,18 +190,15 @@ export function ContractTerms({
         onReplay(draft)
       }}
     >
-      {specs.map((spec) => (
-        <Term
-          key={spec.key}
-          spec={spec}
-          value={draft[spec.key]}
-          was={draft[spec.key] === active[spec.key] ? null : formatTerm(spec, active[spec.key])}
-          onChange={(v) => setDraft({ ...draft, [spec.key]: v })}
-        />
-      ))}
+      <p className="panel-intro">How much can the fleet promise while protecting home backup?</p>
+      {specs.filter((spec) => primary.includes(spec.key)).map(field)}
+      <details className="advanced-terms">
+        <summary>Call limits & device faults</summary>
+        {specs.filter((spec) => !primary.includes(spec.key)).map(field)}
+      </details>
       <div className="terms-actions">
         <button type="submit" className="replay" data-primary={changed} title="Restart the replay with these terms">
-          Replay
+          {changed ? 'Apply & reset' : 'Reset replay'}
         </button>
         {changed && (
           <button type="button" onClick={() => setDraft(active)}>
@@ -168,7 +206,8 @@ export function ContractTerms({
           </button>
         )}
       </div>
-      <SafeContract terms={draft} />
+      {changed && <p className="terms-note">Draft terms · apply to update the map, or evaluate them below.</p>}
+      <SafeContract terms={draft} onReplay={onReplay} />
     </form>
   )
 }
