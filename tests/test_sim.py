@@ -26,18 +26,25 @@ def ct(day: int, hour: int = 0) -> datetime:
 
 @dataclass
 class Scripted:
-    """A policy that always proposes the same actions (and kW targets and call shares, if given)."""
+    """A policy that always proposes the same actions (and kW targets, call shares and refill levels, if given)."""
 
     actions: list[str]
     kw: list[float] | None = None
     call_kw: list[float] | None = None
+    refill_kwh: list[float] | None = None
 
     def decide(self, frame: Frame, fleet: FleetView) -> Decisions:
         n = len(self.actions)
         kw = None if self.kw is None else np.array(self.kw)
         call_kw = None if self.call_kw is None else np.array(self.call_kw)
+        refill_kwh = None if self.refill_kwh is None else np.array(self.refill_kwh)
         return Decisions(
-            action=np.array(self.actions), src=np.full(n, "rule"), conf=np.full(n, np.nan), kw=kw, call_kw=call_kw
+            action=np.array(self.actions),
+            src=np.full(n, "rule"),
+            conf=np.full(n, np.nan),
+            kw=kw,
+            call_kw=call_kw,
+            refill_kwh=refill_kwh,
         )
 
 
@@ -89,6 +96,7 @@ def tiny_sim(
     kw: list[float] | None = None,
     promised_kw: float | None = None,
     call_kw: list[float] | None = None,
+    refill_kwh: list[float] | None = None,
 ) -> Sim:
     """25 kWh `standard` homes with the exact default drain (no noise): `DRAIN_13F` at 13 °F.
 
@@ -102,7 +110,7 @@ def tiny_sim(
     prices = price if isinstance(price, list) else [price] * ticks
     frames = [Frame(i=k, t=ct(15, 12) + k * TICK, price=p, temp_f=temp_f, eea="EEA3") for k, p in enumerate(prices)]
     contract = None if promised_kw is None else UtilityContract(nameplate_mw=promised_kw / 1000, size_frac=1.0)
-    return Sim(frames, fleet, Scripted(actions, kw, call_kw), [GridDown(down or [False] * n)], contract)
+    return Sim(frames, fleet, Scripted(actions, kw, call_kw, refill_kwh), [GridDown(down or [False] * n)], contract)
 
 
 def test_discharge_is_12kw_and_stops_at_the_floor() -> None:
@@ -205,6 +213,30 @@ def test_penalty_and_promise_kept() -> None:
     energy = 3 * 0.5 + 14.5 * 1.0  # $/kWh: tick 0's 3 kWh at $500/MWh, the other 14.5 kWh at $1,000
     capacity = 7 * 2000 * 0.012 / 672  # $2,000/MW-week, 672 ticks a week
     assert rs[-1].revenue_usd == pytest.approx(energy + capacity - rs[-1].penalty_usd)
+    # All 14.5 called kWh went to the call; tick 0's export was the market's.
+    assert rs[-1].contract_pnl_usd == pytest.approx(14.5 + capacity - rs[-1].penalty_usd)
+    assert rs[-1].market_usd == pytest.approx(1.5) and rs[-1].backup_cost_usd == 0
+
+
+def test_call_energy_is_delivery_up_to_the_promise() -> None:
+    """4 kW promised, 12 kW exported in a call: 1 kWh for the call, 2 kWh for the market, at $1,000/MWh."""
+    r = tiny_sim(soc=[0.90], actions=["discharge"], promised_kw=4.0).step()
+    assert r.utility_call and r.kept
+    capacity = 2000 * 0.004 / 672
+    assert r.contract_pnl_usd == pytest.approx(1.0 + capacity)
+    assert r.market_usd == pytest.approx(2.0)
+    assert r.revenue_usd == pytest.approx(r.contract_pnl_usd - r.backup_cost_usd + r.market_usd)
+
+
+def test_backup_cost_is_charging_up_to_the_policys_refill_level() -> None:
+    """3 kWh charged each at $9,000/MWh. Home 0 starts 1.5 kWh below its refill level, home 1 7.5 kWh
+    below: 4.5 kWh of backup, the other 1.5 kWh is the market's."""
+    sim = tiny_sim(soc=[0.10, 0.50], actions=["charge", "charge"], price=9000.0, refill_kwh=[4.0, 20.0])
+    r = sim.step()
+    assert r.backup_cost_usd == pytest.approx(4.5 * 9)
+    assert r.market_usd == pytest.approx(-1.5 * 9)
+    assert r.contract_pnl_usd == 0
+    assert r.revenue_usd == pytest.approx(-6 * 9)
 
 
 def test_headroom_sold_is_export_beyond_the_call_share() -> None:
@@ -428,6 +460,19 @@ def test_fleet_stats_agree_with_homes(replay: list[TickResult]) -> None:
         assert r.delivered_mw == pytest.approx(r.kw[r.action == "discharge"].sum() / 1000)
         assert r.delivered_mw <= r.available_mw + 1e-12
     assert replay[-1].revenue_usd == pytest.approx(sum(r.revenue_tick_usd for r in replay))
+
+
+@pytest.mark.parametrize("which", ["replay", "naive_replay"])
+def test_money_split_adds_up_to_revenue(which: str, request: pytest.FixtureRequest) -> None:
+    replay: list[TickResult] = request.getfixturevalue(which)
+    for r in replay:
+        assert r.contract_pnl_usd - r.backup_cost_usd + r.market_usd == pytest.approx(r.revenue_usd, abs=1e-6)
+    end = replay[-1]
+    assert end.backup_cost_usd > 0  # homes back from the outage refill their reserve at storm prices
+    if which == "naive_replay":
+        assert end.contract_pnl_usd == 0  # no contract
+    else:
+        assert end.contract_pnl_usd != 0
 
 
 def test_precharge_fills_the_fleet_before_the_storm() -> None:

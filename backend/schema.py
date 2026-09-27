@@ -8,8 +8,10 @@ keep their own internal state and must not import these models; a thin
 serializer converts sim state into messages at the edge.
 
 Protocol:
+  client -> server   connect to /ws?<ReplayParams as query params> (bad params: closed with a reason)
   server -> client   `init` once on connect and after every reset, then one `tick` per interval
   client -> server   `play` | `pause` | `speed` | `reset`
+  GET /api/safe-contract?<ScenarioParams>  -> `SafeContractResponse`
 """
 
 from typing import Annotated, Literal
@@ -34,6 +36,8 @@ Tier = Literal["none", "standard", "critical"]
 
 Fraction = Annotated[float, Field(ge=0, le=1)]
 
+MAX_HOMES = 2000
+
 
 class Wire(BaseModel):
     """Base for every wire model: unknown fields are rejected, instances are immutable."""
@@ -45,6 +49,39 @@ class Wire(BaseModel):
         # Fields with defaults (e.g. `type`) stay required in the generated TS types.
         json_schema_serialization_defaults_required=True,
     )
+
+
+# --- replay parameters (query params) -----------------------------------------
+
+
+class ScenarioParams(Wire):
+    """Every replay knob except the contract size: what GET /api/safe-contract sweeps the contract over."""
+
+    policy: Literal["contract", "naive"] = "contract"
+    """`contract`: keeps both contracts (docs/dispatch-design.md); `naive`: the price-rule baseline."""
+    standard_backup_h: Annotated[float, Field(ge=0, le=24)] = 8.0
+    """Hours of backup the `standard` tier's reserve covers at the forecast temperature."""
+    max_calls_per_day: Annotated[int, Field(ge=0, le=10)] = 1
+    """Utility calls that may start per Central-time day."""
+    emergency_uncapped: bool = False
+    """During an EEA a call may start whatever `max_calls_per_day` says (the stress case)."""
+    skip_before_storm: bool = False
+    """No call while a severe cold snap is in the next 24 h forecast."""
+    fault_rate: Annotated[float, Field(ge=0, le=1)] = 0.001
+    """Silent device faults per home-hour."""
+    headroom_mode: Literal["keep", "sell"] = "keep"
+    """Contract policy only. `keep`: energy above what the contracts need stays in the batteries;
+    `sell`: export it when the price spikes."""
+    homes: Annotated[int, Field(ge=1, le=MAX_HOMES)] = 500
+    scenario: Literal["uri"] = "uri"
+    """The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021."""
+
+
+class ReplayParams(ScenarioParams):
+    """One replay's knobs: the /ws query params, echoed in `init`."""
+
+    contract: Fraction = 0.3
+    """Utility contract size, share of fleet nameplate (homes x max kW)."""
 
 
 # --- server -> client ---------------------------------------------------------
@@ -102,7 +139,16 @@ class FleetStats(Wire):
 
     During a call this includes what the rest of the call will draw."""
     revenue_usd: float
-    """Cumulative since replay start; charging at negative prices earns money."""
+    """Cumulative net revenue since replay start: `contract_pnl_usd` - `backup_cost_usd` + `market_usd`.
+    Charging at negative prices earns money."""
+    contract_pnl_usd: float
+    """Cumulative utility contract P&L: capacity payments + call energy (delivery up to the promise,
+    at the interval price) - shortfall penalties."""
+    backup_cost_usd: float
+    """Cumulative cost of charging homes back up to their reserve (and, outside calls, call-ready
+    for the next one), whatever the price. Negative if that charging ran at negative prices."""
+    market_usd: float
+    """Cumulative everything else: exports beyond the promise, minus other charging (cheap fills, pre-charge)."""
     revenue_tick_usd: float
     """Revenue earned this tick alone."""
     penalty_usd: Annotated[float, Field(ge=0)]
@@ -140,6 +186,8 @@ class InitMessage(Wire):
     end: AwareDatetime
     """Exclusive end of the replay window."""
     n_ticks: Annotated[int, Field(gt=0)]
+    params: ReplayParams
+    """The parameters this replay runs with (defaults filled in)."""
     homes: list[HomeInfo]
 
 
@@ -159,6 +207,43 @@ class TickMessage(Wire):
 
 
 ServerMessage = Annotated[InitMessage | TickMessage, Field(discriminator="type")]
+
+
+# --- GET /api/safe-contract ---------------------------------------------------
+
+
+class SafeContractPoint(Wire):
+    """One contract size, averaged over the seeds."""
+
+    contract: Fraction
+    """Contract size, share of fleet nameplate."""
+    storm_kept: Fraction | None
+    """Share of called intervals kept in the storm (Feb 14-18); null if the storm had no calls."""
+    pre_kept: Fraction | None
+    """The same before the storm (Feb 10-12)."""
+    contract_pnl_usd: float
+    """Over the whole replay, as in `FleetStats`."""
+    backup_cost_usd: float
+    """Over the whole replay, as in `FleetStats`."""
+    uncovered: Annotated[float, Field(ge=0)]
+    """Failovers no other home could cover, over the whole replay."""
+    critical_ran_out: Annotated[float, Field(ge=0)]
+    """Critical-tier homes whose battery ran out during an outage, over the whole replay."""
+
+
+class SafeContractResponse(Wire):
+    """The largest contract the fleet can promise and keep through the storm."""
+
+    params: ScenarioParams
+    seeds: list[int]
+    """Every point is the mean over these replays."""
+    curve: list[SafeContractPoint]
+    """Ascending by contract size."""
+    baseline_critical_ran_out: Annotated[float, Field(ge=0)]
+    """`critical_ran_out` with no utility contract: what the rule compares against."""
+    safe: Fraction | None
+    """The largest contract with `storm_kept` >= 0.95 (or no storm calls) and no more
+    critical homes running out than with no contract; null if none qualifies."""
 
 
 # --- client -> server ---------------------------------------------------------

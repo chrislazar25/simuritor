@@ -1,49 +1,74 @@
-"""Simuritor backend: a health check and the replay websocket.
+"""Simuritor backend: a health check, the replay websocket and the safe-contract curve.
 
-The websocket handler only moves messages. It pumps a session's outgoing
-messages to the socket and hands validated client messages back to it. What
-gets sent is up to the session: `ReplaySession` steps a fresh sim for each
-connection.
+The websocket handler only moves messages. It validates the replay params in the
+query string, pumps a session's outgoing messages to the socket and hands validated
+client messages back to it. What gets sent is up to the session: `ReplaySession`
+steps a fresh sim for each connection.
 
 Run: uv run uvicorn backend.app:app --reload --port 8000
-     SIMURITOR_POLICY=naive uv run uvicorn ...   (the baseline; default `contract`)
+     ws://localhost:8000/ws?policy=naive&contract=0.1   (any `ReplayParams`; defaults otherwise)
 """
 
 import asyncio
 import contextlib
+import functools
 import logging
+import multiprocessing
 import os
+import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
-from functools import partial
-from typing import Protocol
+from concurrent.futures import ProcessPoolExecutor
+from typing import Annotated, Protocol
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
 
-from backend.policy import POLICIES
+from backend.safe_contract import CONTRACTS, SEEDS, safe_contract
 from backend.schema import (
     ClientMessage,
     InitMessage,
     PauseMessage,
     PlayMessage,
+    ReplayParams,
     ResetMessage,
+    SafeContractResponse,
+    ScenarioParams,
     SpeedMessage,
     TickMessage,
     client_message,
 )
-from backend.serialize import init_message, tick_message
-from backend.sim import Sim, uri_replay
+from backend.serialize import init_message, replay_sim, tick_message
+from backend.sim import Sim
 
 DEFAULT_TICKS_PER_SEC = 8.0
-POLICY = os.environ.get("SIMURITOR_POLICY", "contract")
-"""A name from `backend.policy.POLICIES`."""
-if POLICY not in POLICIES:
-    raise ValueError(f"SIMURITOR_POLICY={POLICY!r}; expected one of {sorted(POLICIES)}")
+MAX_CLOSE_REASON_BYTES = 123
+"""The websocket protocol's limit on a close frame's reason."""
+SAFE_CONTRACT_CACHE_SIZE = 64
 
 # uvicorn configures this logger, so our lines show up in the server console.
 log = logging.getLogger("uvicorn.error")
 
-app = FastAPI(title="Simuritor")
+
+@functools.cache
+def replay_pool() -> ProcessPoolExecutor:
+    """Worker processes for headless replays, started on first use. Spawned, not forked: the
+    server process runs threads."""
+    workers = min(os.cpu_count() or 1, (len(CONTRACTS) + 1) * len(SEEDS))
+    return ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"))
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+    if replay_pool.cache_info().currsize:
+        replay_pool().shutdown(cancel_futures=True)
+        replay_pool.cache_clear()
+
+
+app = FastAPI(title="Simuritor", lifespan=lifespan)
+safe_contract_cache: OrderedDict[ScenarioParams, SafeContractResponse] = OrderedDict()
+"""Least recently used last out, `SAFE_CONTRACT_CACHE_SIZE` entries."""
 
 
 class Session(Protocol):
@@ -61,13 +86,16 @@ class Session(Protocol):
 class ReplaySession:
     """Starts paused at tick 0. Play steps the sim at `ticks_per_sec`; it pauses itself after the last tick.
 
-    Reset builds a fresh sim (same seed, so the same replay), pauses, and resends `init`.
+    Reset builds a fresh sim (same params and seed, so the same replay), pauses, and resends `init`.
     Speed survives a reset.
     """
 
-    def __init__(self, new_sim: Callable[[], Sim] = partial(uri_replay, policy=POLICY)) -> None:
+    def __init__(
+        self, params: ReplayParams = ReplayParams(), new_sim: Callable[[ReplayParams], Sim] = replay_sim
+    ) -> None:
+        self.params = params
         self.new_sim = new_sim
-        self.sim = new_sim()
+        self.sim = new_sim(params)
         self.playing = False
         self.ticks_per_sec = DEFAULT_TICKS_PER_SEC
         self.reset_requested = False
@@ -76,12 +104,12 @@ class ReplaySession:
 
     async def messages(self) -> AsyncIterator[InitMessage | TickMessage]:
         loop = asyncio.get_running_loop()
-        yield init_message(self.sim)
+        yield init_message(self.sim, self.params)
         while True:
             if self.reset_requested:
                 self.reset_requested = False
-                self.sim = self.new_sim()
-                yield init_message(self.sim)
+                self.sim = self.new_sim(self.params)
+                yield init_message(self.sim, self.params)
             elif self.playing and not self.sim.done:
                 due = loop.time() + 1 / self.ticks_per_sec
                 yield tick_message(self.sim.fleet, self.sim.step())
@@ -118,10 +146,32 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/safe-contract")
+async def get_safe_contract(params: Annotated[ScenarioParams, Query()]) -> SafeContractResponse:
+    """Promise kept, contract P&L and backup cost against contract size, and the largest safe
+    contract (`backend/safe_contract.py`). Cached by params."""
+    if params in safe_contract_cache:
+        safe_contract_cache.move_to_end(params)
+        return safe_contract_cache[params]
+    started = time.perf_counter()
+    response = await safe_contract(params, replay_pool())
+    log.info("safe-contract in %.1f s: %s", time.perf_counter() - started, params.model_dump_json())
+    safe_contract_cache[params] = response
+    if len(safe_contract_cache) > SAFE_CONTRACT_CACHE_SIZE:
+        safe_contract_cache.popitem(last=False)
+    return response
+
+
 @app.websocket("/ws")
 async def replay_socket(websocket: WebSocket) -> None:
+    """Query params are `ReplayParams`; invalid ones close the socket (1008) with the reason."""
     await websocket.accept()
-    session: Session = ReplaySession()
+    try:
+        params = ReplayParams.model_validate(dict(websocket.query_params))
+    except ValidationError as err:
+        await websocket.close(status.WS_1008_POLICY_VIOLATION, close_reason(err))
+        return
+    session: Session = ReplaySession(params)
     tasks = [
         asyncio.create_task(send_all(websocket, session)),
         asyncio.create_task(receive_all(websocket, session)),
@@ -134,6 +184,15 @@ async def replay_socket(websocket: WebSocket) -> None:
     for task in done:
         with contextlib.suppress(WebSocketDisconnect):
             task.result()
+
+
+def close_reason(err: ValidationError) -> str:
+    """The first invalid param and why, e.g. "contract: Input should be less than or equal to 1"."""
+    e = err.errors(include_url=False)[0]
+    reason = f"{'.'.join(map(str, e['loc'])) or 'params'}: {e['msg']}"
+    if len(err.errors()) > 1:
+        reason += f" (+{len(err.errors()) - 1} more)"
+    return reason.encode()[:MAX_CLOSE_REASON_BYTES].decode(errors="ignore")
 
 
 async def send_all(websocket: WebSocket, session: Session) -> None:

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from backend.schema import InitMessage, TickMessage, client_message, server_message
+from backend.schema import InitMessage, ReplayParams, ScenarioParams, TickMessage, client_message, server_message
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "fixtures"
@@ -65,6 +65,58 @@ def test_fleet_stats_match_homes(init: InitMessage, tick: TickMessage) -> None:
     assert fleet.delivered_mw == pytest.approx(delivered_kw / 1000)
     assert fleet.delivered_mw <= fleet.available_mw
     assert fleet.utility_call == (fleet.promised_mw is not None and fleet.promised_mw > 0)
+    money = fleet.contract_pnl_usd - fleet.backup_cost_usd + fleet.market_usd
+    assert money == pytest.approx(fleet.revenue_usd, abs=0.02)
+
+
+def test_init_echoes_params_that_match_it(init: InitMessage) -> None:
+    assert len(init.homes) == init.params.homes
+
+
+def test_replay_params_default_and_parse_query_strings() -> None:
+    assert ReplayParams().model_dump() == {
+        "policy": "contract",
+        "standard_backup_h": 8.0,
+        "max_calls_per_day": 1,
+        "emergency_uncapped": False,
+        "skip_before_storm": False,
+        "fault_rate": 0.001,
+        "headroom_mode": "keep",
+        "homes": 500,
+        "scenario": "uri",
+        "contract": 0.3,
+    }
+    query = {"contract": "0.1", "homes": "50", "emergency_uncapped": "true", "headroom_mode": "sell"}
+    params = ReplayParams.model_validate(query)
+    assert (params.contract, params.homes, params.emergency_uncapped, params.headroom_mode) == (0.1, 50, True, "sell")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"contract": "1.5"},
+        {"contract": "-0.1"},
+        {"homes": "0"},
+        {"homes": "100000"},
+        {"homes": "12.5"},
+        {"policy": "greedy"},
+        {"headroom_mode": "hoard"},
+        {"scenario": "katrina"},
+        {"fault_rate": "abc"},
+        {"standard_backup_h": "-1"},
+        {"max_calls_per_day": "-1"},
+        {"skip_before_storm": "maybe"},
+        {"colour": "red"},
+    ],
+)
+def test_invalid_replay_params(query: dict[str, str]) -> None:
+    with pytest.raises(ValidationError):
+        ReplayParams.model_validate(query)
+
+
+def test_scenario_params_have_no_contract() -> None:
+    with pytest.raises(ValidationError):
+        ScenarioParams.model_validate({"contract": "0.3"})
 
 
 @pytest.mark.parametrize(

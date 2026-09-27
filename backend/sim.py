@@ -9,7 +9,7 @@ one entry per home); `backend/serialize.py` turns it into wire messages.
 
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any
 
@@ -61,6 +61,11 @@ class FleetConfig:
     """
     drain_noise: float = 0.20
     """⚠ Each home's load is the formula times a fixed factor in [1 - noise, 1 + noise]."""
+
+    def with_backup_hours(self, tier: Tier, hours: float) -> "FleetConfig":
+        """This config with `tier`'s backup hours changed."""
+        backup = tuple((t, hours if t == tier else h) for t, h in self.backup_hours)
+        return replace(self, backup_hours=backup)
 
 
 def exact_mix[T](mix: Sequence[tuple[T, float]], n: int, rng: np.random.Generator) -> np.ndarray:
@@ -174,6 +179,14 @@ class TickResult:
     revenue_tick_usd: float
     """Energy (exports - imports at the price) + capacity payment - shortfall penalty."""
     revenue_usd: float
+    """Cumulative net revenue: `contract_pnl_usd` - `backup_cost_usd` + `market_usd`."""
+    contract_pnl_usd: float
+    """Cumulative: capacity payments + call energy (delivery up to the promise, at the price) - penalties."""
+    backup_cost_usd: float
+    """Cumulative cost of charging homes back up to the policy's refill level (`Decisions.refill_kwh`:
+    the reserve, and call-ready outside calls). Negative when that charging ran at negative prices."""
+    market_usd: float
+    """Cumulative everything else: exports beyond the promise, minus imports above the refill level."""
     penalty_usd: float
     """Cumulative shortfall penalties."""
     kept: bool
@@ -219,6 +232,8 @@ class Sim:
         self.failover = failover
         self.i = 0
         self.revenue_usd = 0.0
+        self.contract_pnl_usd = 0.0
+        self.backup_cost_usd = 0.0
         self.penalty_usd = 0.0
         self.called_ticks = 0
         self.kept_ticks = 0
@@ -305,6 +320,10 @@ class Sim:
         backed_up = np.where(action == "backup", np.minimum(house_kwh, np.minimum(energy, max_kwh)), 0.0)
         moved = exported + imported + backed_up
         to_floor = np.minimum(imported, np.maximum(export_floor - energy, 0.0))
+        if decisions.refill_kwh is not None:
+            self.backup_cost_usd += float(
+                np.minimum(imported, np.maximum(decisions.refill_kwh - energy, 0.0)).sum() / 1000 * frame.price
+            )
         # An action that moved no energy (e.g. a dark home) is reported as hold.
         action = read_only(np.where(moved > 0, action, "hold"))
 
@@ -316,15 +335,19 @@ class Sim:
         kept = False
         if owed is not None:
             revenue_tick += owed.capacity_usd
+            self.contract_pnl_usd += owed.capacity_usd
             shortfall_mw = owed.promised_mw - delivered_mw
             if shortfall_mw > SLACK_MW:
                 penalty = shortfall_mw * HOURS_PER_TICK * max(frame.price, 0.0)  # a penalty never pays out
                 revenue_tick -= penalty
+                self.contract_pnl_usd -= penalty
                 self.penalty_usd += penalty
             if owed.call:
                 kept = delivered_mw >= (1 - owed.kept_tolerance) * owed.promised_mw - SLACK_MW
                 self.called_ticks += 1
                 self.kept_ticks += kept
+                # The export energy (already in revenue_tick) that went to the call.
+                self.contract_pnl_usd += min(delivered_mw, owed.promised_mw) * HOURS_PER_TICK * frame.price
         self.revenue_usd += revenue_tick
         for f in timeline.failovers:
             self.failovers_warned += f.warned
@@ -357,6 +380,9 @@ class Sim:
             reserve_recharge_usd=float(to_floor.sum() / 1000 * frame.price),
             revenue_tick_usd=revenue_tick,
             revenue_usd=self.revenue_usd,
+            contract_pnl_usd=self.contract_pnl_usd,
+            backup_cost_usd=self.backup_cost_usd,
+            market_usd=self.revenue_usd - self.contract_pnl_usd + self.backup_cost_usd,
             penalty_usd=self.penalty_usd,
             kept=kept,
             promise_kept=self.kept_ticks / self.called_ticks if self.called_ticks else None,

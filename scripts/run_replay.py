@@ -130,7 +130,10 @@ def main() -> None:
         print(f"Headroom sold: {df['headroom_sold_mwh'].sum():.2f} MWh")
     if isinstance(sim.devices, SilentDeviceFaults):
         print(f"Homes out with a hard device fault at the end: {sim.devices.hard.sum()}")
-    print(f"Net revenue: ${r.revenue_usd:,.0f}")
+    print(
+        f"Net revenue: ${r.revenue_usd:,.0f} = contract ${r.contract_pnl_usd:,.0f} - backup ${r.backup_cost_usd:,.0f}"
+        f" + market ${r.market_usd:,.0f}"
+    )
     print("\nPer day: min/max price ($/MWh), min homes on grid, max homes on battery / dark (ran out), dark")
     print("home-hours, max homes dark by contract, grid cuts (times a home lost the grid), called/kept ticks,")
     print("max delivered MW, mean headroom MWh, penalties that day ($), failovers that day, cumulative net")

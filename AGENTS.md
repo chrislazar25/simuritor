@@ -35,6 +35,7 @@ Keep it lean: one interface per piece, one or two implementations. Add an abstra
 
 ## Decisions so far
 - One replay session per websocket connection; server sends `init` on connect and after reset, then one full `tick` per interval (no deltas).
+- Replay knobs are `/ws` query params (`ReplayParams`; bad ones close the socket with a reason), echoed in `init`. `GET /api/safe-contract` sweeps the contract size for the other knobs.
 - The deployed site plays a pre-recorded replay (a list of `ServerMessage`s, `init` first) in the browser; live mode runs locally.
 - Prices: `LZ_AEN` is the standard load-zone price (ERCOT type `LZ`); energy-weighted rows are `LZ_AEN_EW`. See `docs/notes.md`.
 - Fleet power: `available_mw` (could export now), `promised_mw` (committed ahead, nullable), `delivered_mw` (actually exported).

@@ -91,6 +91,8 @@
 
     ![Storm promise kept by standard backup hours at 10% and 30%](img/backup-vs-promise.png)
     Cutting standard backup from 8 h to 4 h lifts storm promise kept at 30% from 67% to 88% and halves the reserve recharge bill, at the cost of 162 more dark home-hours in the storm.
+- Safe contract endpoint (`GET /api/safe-contract`, `backend/safe_contract.py`): contract 5–60% in steps of 5, plus no contract, × seeds 0–2, in a process pool. On this 16-core machine it takes 4.6 s with a cold pool (worker start-up), 3.0 s warm at 500 homes, 5.8 s warm at 2,000 homes (`MAX_HOMES`), and ~0 when cached. With the defaults, safe = 10% (storm kept 95.6%; 15% keeps 92.2%). With standard backup 4 h it's 20%, and with headroom sold none qualifies. The critical-homes half of the rule never binds today: every contract runs out 4.0 critical homes on average, the same as no contract (the never-restored ones, see below).
+- Money split (`FleetStats`): `revenue_usd` = `contract_pnl_usd` − `backup_cost_usd` + `market_usd`. At 10% / 30% (seed 0) that's −$226k = $45k − $271k − $0.3k and −$253k = $98k − $351k − $0.4k: with headroom kept, the market line is ~0 and backup is the whole loss.
 - Rolling outages (⚠ assumption): ERCOT and the utilities intended short rotating outages, but many circuits stayed out for days (critical-load circuits exempted, the sheer volume of load shed, ice damage). `RollingOutage` models both: 10% of homes never restored for the whole window, the rest cycling 4 h off / 6 h on in 5 groups, each group's cycle shifted by a seeded 0–7 ticks so cuts land on varied quarter hours (46% of the fleet out on average, 1–3 groups at a time). The durations and shares are our assumptions, not sourced; say so in the README.
 - Household drain (⚠ assumption): lowered from ~7 kW to ~2.5 kW at 13 °F so a full average battery lasts ~12 h on backup (homes shed load on backup; reasoning in `FleetConfig`). No single value makes both battery sizes last 10–14 h (25 kWh needs ≤ 2.5 kW, 39.2 kWh needs ≥ 2.8 kW).
 
@@ -114,6 +116,15 @@
 - The pre-storm window has only 5 called ticks per run, so its 100% kept is thin evidence. Say so when comparing windows, or widen the window (Feb 13 has 12 of the rest).
 - `headroom_sold_mwh` counts exports beyond each home's call share (all exports outside calls), so for NaivePolicy it's everything it sells. Reserve recharge cost counts any import that brings a home up to its export floor (contract reserve or 20%), whatever the policy meant by it.
 - `results/sweep.csv` is script output, committed (32 KB) so the charts are reproducible without rerunning the sweep: regenerate it with `scripts/sweep.py`, then the charts with `scripts/plots.py`; don't edit either by hand.
+- Call energy in `contract_pnl_usd` is delivery up to the promise, at the interval price. Delivery beyond the promise (sold headroom during a call) is `market_usd`. This split is settlement-style (it doesn't care which home exported what), so it can differ slightly from `headroom_sold_mwh` when a call is short and headroom is being sold at the same time.
+- `backup_cost_usd` counts charging up to the policy's refill level (`Decisions.refill_kwh`): for ContractPolicy that's the reserve plus, outside calls, call-ready; for NaivePolicy it's the 20% floor. That makes it 2–4× the sweep's `reserve_recharge_usd`, which stops at the export floor ($271k vs $120k at 10%, $351k vs $82k at 30%). The sweep CSV and the backup chart still use the narrower number, labelled "reserve recharge"; rerun both if the README should quote backup cost instead.
+- The safe rule's kept bar is 95% (the endpoint and the chart); the earlier plan in `docs/dispatch-design.md` said 99%. It's `SAFE_KEPT` in `backend/safe_contract.py`. A contract with no storm calls counts as kept.
+- `/api/safe-contract` notes:
+  - The cache is in-process: an LRU of 64 entries, not shared across uvicorn workers, and two identical requests in flight both compute.
+  - The worker pool is spawned (the server runs threads) on the first request, so that request pays ~1.5 s of start-up. Warm it in the lifespan if that shows.
+  - The Vite dev proxy only forwards `/ws`, so the frontend needs `/api` added before it can call the endpoint.
+  - The deployed static site can't call it at all: ship precomputed JSON for the default params, or cut the feature there.
+- Replay params: `/ws?policy=naive&contract=0.1…` replaced the `SIMURITOR_POLICY` env var. `ReplayParams.contract` defaults to 30%, while `UtilityContract.size_frac` (used by `run_replay` and the sim tests) still defaults to 60%. Align them if that confuses.
 - Scene lighting: `suncalc` vs ~30 lines of our own sun math; add a "hold light level" toggle if the day/night cycle distracts in the Loom recording.
 
 ## Deferred (do if time allows)

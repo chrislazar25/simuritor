@@ -77,6 +77,10 @@ class UriParquetSource:
     DEFAULT_START = datetime(2021, 2, 10, tzinfo=TZ)
     """Three pre-storm days before prices spike on Feb 13 (the insight experiment compares them)."""
     DEFAULT_END = datetime(2021, 2, 20, tzinfo=TZ)
+    PRE_STORM = (DEFAULT_START, datetime(2021, 2, 13, tzinfo=TZ))
+    """[start, end) of the insight experiment's pre-storm window."""
+    STORM = (datetime(2021, 2, 14, tzinfo=TZ), datetime(2021, 2, 19, tzinfo=TZ))
+    """[start, end) of its storm window."""
 
     def __init__(self, data_dir: Path = DATA_DIR) -> None:
         self.data_dir = data_dir

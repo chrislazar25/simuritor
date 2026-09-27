@@ -3,15 +3,15 @@
 import pytest
 
 from backend.data import TICK
-from backend.schema import InitMessage, TickMessage, server_message
-from backend.serialize import init_message, tick_message
-from backend.sim import uri_replay
+from backend.schema import InitMessage, ReplayParams, TickMessage, server_message
+from backend.serialize import init_message, replay_sim, tick_message
 
 
 @pytest.fixture(scope="module")
 def messages() -> tuple[InitMessage, list[TickMessage]]:
-    sim = uri_replay(seed=0)
-    init = init_message(sim)
+    params = ReplayParams()
+    sim = replay_sim(params)
+    init = init_message(sim, params)
     ticks = []
     while not sim.done:
         ticks.append(tick_message(sim.fleet, sim.step()))
@@ -22,7 +22,8 @@ def test_init_describes_the_replay(messages: tuple[InitMessage, list[TickMessage
     init, ticks = messages
     assert init.n_ticks == len(ticks) == 960
     assert init.start == ticks[0].t and init.end == ticks[-1].t + TICK
-    assert len({h.id for h in init.homes}) == len(init.homes) == 500
+    assert len({h.id for h in init.homes}) == len(init.homes) == init.params.homes == 500
+    assert init.params == ReplayParams()
     assert all(h.tier == "critical" for h in init.homes if h.household == "medical")
     assert sum(h.tier == "none" for h in init.homes) == sum(h.tier == "critical" for h in init.homes) == 50
 
@@ -51,6 +52,8 @@ def test_every_tick_keeps_the_contract_consistent(messages: tuple[InitMessage, l
         assert fleet.delivered_mw == pytest.approx(delivered_kw / 1000)
         assert fleet.delivered_mw <= fleet.available_mw + 1e-12
         assert (fleet.promised_mw > 0) == fleet.utility_call
+        money = fleet.contract_pnl_usd - fleet.backup_cost_usd + fleet.market_usd
+        assert money == pytest.approx(fleet.revenue_usd, abs=0.02)  # each rounded to the cent
         assert all(h.src == "rule" and h.conf is None for h in homes)
         # Failover counts are running totals of the events; an event without cover_s wasn't covered.
         warned += sum(e.kind == "warned" for e in tick.failovers)

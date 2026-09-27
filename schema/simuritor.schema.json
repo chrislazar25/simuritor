@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "WireMessage",
+  "title": "Simuritor",
   "anyOf": [
     {
-      "$ref": "#/$defs/ServerMessage"
+      "$ref": "#/$defs/WireMessage"
     },
     {
-      "$ref": "#/$defs/ClientMessage"
+      "$ref": "#/$defs/SafeContractResponse"
     }
   ],
   "$defs": {
@@ -112,7 +112,19 @@
           "type": "number"
         },
         "revenue_usd": {
-          "description": "Cumulative since replay start; charging at negative prices earns money.",
+          "description": "Cumulative net revenue since replay start: `contract_pnl_usd` - `backup_cost_usd` + `market_usd`.\nCharging at negative prices earns money.",
+          "type": "number"
+        },
+        "contract_pnl_usd": {
+          "description": "Cumulative utility contract P&L: capacity payments + call energy (delivery up to the promise,\nat the interval price) - shortfall penalties.",
+          "type": "number"
+        },
+        "backup_cost_usd": {
+          "description": "Cumulative cost of charging homes back up to their reserve (and, outside calls, call-ready\nfor the next one), whatever the price. Negative if that charging ran at negative prices.",
+          "type": "number"
+        },
+        "market_usd": {
+          "description": "Cumulative everything else: exports beyond the promise, minus other charging (cheap fills, pre-charge).",
           "type": "number"
         },
         "revenue_tick_usd": {
@@ -189,6 +201,9 @@
         "homes_dark_by_contract",
         "headroom_mwh",
         "revenue_usd",
+        "contract_pnl_usd",
+        "backup_cost_usd",
+        "market_usd",
         "revenue_tick_usd",
         "penalty_usd",
         "promise_kept",
@@ -335,6 +350,10 @@
           "exclusiveMinimum": 0,
           "type": "integer"
         },
+        "params": {
+          "$ref": "#/$defs/ReplayParams",
+          "description": "The parameters this replay runs with (defaults filled in)."
+        },
         "homes": {
           "items": {
             "$ref": "#/$defs/HomeInfo"
@@ -347,9 +366,98 @@
         "start",
         "end",
         "n_ticks",
+        "params",
         "homes"
       ],
       "title": "InitMessage",
+      "type": "object"
+    },
+    "ReplayParams": {
+      "additionalProperties": false,
+      "description": "One replay's knobs: the /ws query params, echoed in `init`.",
+      "properties": {
+        "policy": {
+          "default": "contract",
+          "description": "`contract`: keeps both contracts (docs/dispatch-design.md); `naive`: the price-rule baseline.",
+          "enum": [
+            "contract",
+            "naive"
+          ],
+          "type": "string"
+        },
+        "standard_backup_h": {
+          "default": 8.0,
+          "description": "Hours of backup the `standard` tier's reserve covers at the forecast temperature.",
+          "maximum": 24,
+          "minimum": 0,
+          "type": "number"
+        },
+        "max_calls_per_day": {
+          "default": 1,
+          "description": "Utility calls that may start per Central-time day.",
+          "maximum": 10,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "emergency_uncapped": {
+          "default": false,
+          "description": "During an EEA a call may start whatever `max_calls_per_day` says (the stress case).",
+          "type": "boolean"
+        },
+        "skip_before_storm": {
+          "default": false,
+          "description": "No call while a severe cold snap is in the next 24 h forecast.",
+          "type": "boolean"
+        },
+        "fault_rate": {
+          "default": 0.001,
+          "description": "Silent device faults per home-hour.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "headroom_mode": {
+          "default": "keep",
+          "description": "Contract policy only. `keep`: energy above what the contracts need stays in the batteries;\n`sell`: export it when the price spikes.",
+          "enum": [
+            "keep",
+            "sell"
+          ],
+          "type": "string"
+        },
+        "homes": {
+          "default": 500,
+          "maximum": 2000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "scenario": {
+          "const": "uri",
+          "default": "uri",
+          "description": "The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021.",
+          "type": "string"
+        },
+        "contract": {
+          "default": 0.3,
+          "description": "Utility contract size, share of fleet nameplate (homes x max kW).",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "policy",
+        "standard_backup_h",
+        "max_calls_per_day",
+        "emergency_uncapped",
+        "skip_before_storm",
+        "fault_rate",
+        "headroom_mode",
+        "homes",
+        "scenario",
+        "contract"
+      ],
+      "title": "ReplayParams",
       "type": "object"
     },
     "TickMessage": {
@@ -524,6 +632,214 @@
         },
         {
           "$ref": "#/$defs/ResetMessage"
+        }
+      ]
+    },
+    "SafeContractPoint": {
+      "additionalProperties": false,
+      "description": "One contract size, averaged over the seeds.",
+      "properties": {
+        "contract": {
+          "description": "Contract size, share of fleet nameplate.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "storm_kept": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Share of called intervals kept in the storm (Feb 14-18); null if the storm had no calls."
+        },
+        "pre_kept": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The same before the storm (Feb 10-12)."
+        },
+        "contract_pnl_usd": {
+          "description": "Over the whole replay, as in `FleetStats`.",
+          "type": "number"
+        },
+        "backup_cost_usd": {
+          "description": "Over the whole replay, as in `FleetStats`.",
+          "type": "number"
+        },
+        "uncovered": {
+          "description": "Failovers no other home could cover, over the whole replay.",
+          "minimum": 0,
+          "type": "number"
+        },
+        "critical_ran_out": {
+          "description": "Critical-tier homes whose battery ran out during an outage, over the whole replay.",
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "contract",
+        "storm_kept",
+        "pre_kept",
+        "contract_pnl_usd",
+        "backup_cost_usd",
+        "uncovered",
+        "critical_ran_out"
+      ],
+      "title": "SafeContractPoint",
+      "type": "object"
+    },
+    "ScenarioParams": {
+      "additionalProperties": false,
+      "description": "Every replay knob except the contract size: what GET /api/safe-contract sweeps the contract over.",
+      "properties": {
+        "policy": {
+          "default": "contract",
+          "description": "`contract`: keeps both contracts (docs/dispatch-design.md); `naive`: the price-rule baseline.",
+          "enum": [
+            "contract",
+            "naive"
+          ],
+          "type": "string"
+        },
+        "standard_backup_h": {
+          "default": 8.0,
+          "description": "Hours of backup the `standard` tier's reserve covers at the forecast temperature.",
+          "maximum": 24,
+          "minimum": 0,
+          "type": "number"
+        },
+        "max_calls_per_day": {
+          "default": 1,
+          "description": "Utility calls that may start per Central-time day.",
+          "maximum": 10,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "emergency_uncapped": {
+          "default": false,
+          "description": "During an EEA a call may start whatever `max_calls_per_day` says (the stress case).",
+          "type": "boolean"
+        },
+        "skip_before_storm": {
+          "default": false,
+          "description": "No call while a severe cold snap is in the next 24 h forecast.",
+          "type": "boolean"
+        },
+        "fault_rate": {
+          "default": 0.001,
+          "description": "Silent device faults per home-hour.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "headroom_mode": {
+          "default": "keep",
+          "description": "Contract policy only. `keep`: energy above what the contracts need stays in the batteries;\n`sell`: export it when the price spikes.",
+          "enum": [
+            "keep",
+            "sell"
+          ],
+          "type": "string"
+        },
+        "homes": {
+          "default": 500,
+          "maximum": 2000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "scenario": {
+          "const": "uri",
+          "default": "uri",
+          "description": "The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy",
+        "standard_backup_h",
+        "max_calls_per_day",
+        "emergency_uncapped",
+        "skip_before_storm",
+        "fault_rate",
+        "headroom_mode",
+        "homes",
+        "scenario"
+      ],
+      "title": "ScenarioParams",
+      "type": "object"
+    },
+    "SafeContractResponse": {
+      "title": "SafeContractResponse",
+      "additionalProperties": false,
+      "description": "The largest contract the fleet can promise and keep through the storm.",
+      "properties": {
+        "params": {
+          "$ref": "#/$defs/ScenarioParams"
+        },
+        "seeds": {
+          "description": "Every point is the mean over these replays.",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "curve": {
+          "description": "Ascending by contract size.",
+          "items": {
+            "$ref": "#/$defs/SafeContractPoint"
+          },
+          "type": "array"
+        },
+        "baseline_critical_ran_out": {
+          "description": "`critical_ran_out` with no utility contract: what the rule compares against.",
+          "minimum": 0,
+          "type": "number"
+        },
+        "safe": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The largest contract with `storm_kept` >= 0.95 (or no storm calls) and no more\ncritical homes running out than with no contract; null if none qualifies."
+        }
+      },
+      "required": [
+        "params",
+        "seeds",
+        "curve",
+        "baseline_critical_ran_out",
+        "safe"
+      ],
+      "type": "object"
+    },
+    "WireMessage": {
+      "title": "WireMessage",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ServerMessage"
+        },
+        {
+          "$ref": "#/$defs/ClientMessage"
         }
       ]
     }

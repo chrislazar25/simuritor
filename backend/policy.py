@@ -57,6 +57,9 @@ class Decisions:
     call_kw: np.ndarray | None = None
     """Each home's share of the utility call, kW, included in `kw`: what failover covers if the
     home drops out. None when the policy doesn't split calls (no failover)."""
+    refill_kwh: np.ndarray | None = None
+    """Energy each home charges back up to whatever the price (its reserve; the contract policy
+    adds call-ready outside calls): charging below it is backup cost. None: no such level."""
 
 
 class Policy(Protocol):
@@ -90,7 +93,12 @@ class NaivePolicy:
         charge = recover | cheap
         action = np.where(discharge, "discharge", np.where(charge, "charge", "hold"))
         n = len(fleet.soc)
-        return Decisions(action=action, src=np.full(n, "rule"), conf=np.full(n, np.nan))
+        return Decisions(
+            action=action,
+            src=np.full(n, "rule"),
+            conf=np.full(n, np.nan),
+            refill_kwh=np.where(fleet.grid, fleet.reserve_floor * fleet.capacity_kwh, 0.0),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +179,14 @@ class ContractPolicy:
         )
         kw = np.where(discharge, export_kw, np.where(charge, charge_kw, 0.0))
         call_kw = np.where(discharge, share, 0.0)
-        return Decisions(action=action, src=np.full(n, "rule"), conf=np.full(n, np.nan), kw=kw, call_kw=call_kw)
+        return Decisions(
+            action=action,
+            src=np.full(n, "rule"),
+            conf=np.full(n, np.nan),
+            kw=kw,
+            call_kw=call_kw,
+            refill_kwh=np.where(fleet.grid, target, 0.0),
+        )
 
 
 def pro_rata(total: float, weight: np.ndarray, cap: np.ndarray) -> np.ndarray:
@@ -194,4 +209,4 @@ def pro_rata(total: float, weight: np.ndarray, cap: np.ndarray) -> np.ndarray:
 
 
 POLICIES: dict[str, Callable[[], Policy]] = {"contract": ContractPolicy, "naive": NaivePolicy}
-"""Policies selectable by name (run_replay `--policy`, the app's `SIMURITOR_POLICY`)."""
+"""Policies selectable by name (run_replay `--policy`, the replay params' `policy`)."""

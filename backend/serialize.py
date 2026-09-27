@@ -1,4 +1,5 @@
-"""The one place sim state becomes wire messages (`backend/schema.py`).
+"""The one place the sim meets the wire (`backend/schema.py`): replay params become a sim,
+sim state becomes messages.
 
 Values are validated by the wire models on the way out. Rounding happens here
 and only here, for display values that nothing downstream recomputes: SoC, kW
@@ -7,12 +8,42 @@ and MW stay exact so the fleet stats keep adding up from the per-home values.
 
 import math
 
-from backend.data import TICK
-from backend.schema import FailoverEvent, FleetStats, HomeInfo, HomeState, InitMessage, TickMessage
-from backend.sim import Fleet, Sim, TickResult
+from backend.data import TICK, Frame
+from backend.schema import (
+    FailoverEvent,
+    FleetStats,
+    HomeInfo,
+    HomeState,
+    InitMessage,
+    ReplayParams,
+    ScenarioParams,
+    TickMessage,
+)
+from backend.sim import Fleet, FleetConfig, Sim, TickResult, uri_replay
 
 
-def init_message(sim: Sim) -> InitMessage:
+def build_sim(params: ScenarioParams, contract: float | None, seed: int = 0, frames: list[Frame] | None = None) -> Sim:
+    """A replay of `params.scenario` with a utility contract of `contract` x nameplate (None: no contract)."""
+    return uri_replay(
+        seed=seed,
+        config=FleetConfig(n_homes=params.homes).with_backup_hours("standard", params.standard_backup_h),
+        frames=frames,
+        policy=params.policy,
+        contract_size=contract,
+        fault_rate=params.fault_rate,
+        policy_options={"headroom_mode": params.headroom_mode} if params.policy == "contract" else None,
+        max_calls_per_day=params.max_calls_per_day,
+        emergency_uncapped=params.emergency_uncapped,
+        skip_before_storm=params.skip_before_storm,
+    )
+
+
+def replay_sim(params: ReplayParams) -> Sim:
+    """The replay a /ws connection with these params plays."""
+    return build_sim(params, params.contract)
+
+
+def init_message(sim: Sim, params: ReplayParams) -> InitMessage:
     fleet = sim.fleet
     homes = [
         HomeInfo(
@@ -32,6 +63,7 @@ def init_message(sim: Sim) -> InitMessage:
         start=sim.frames[0].t,
         end=sim.frames[-1].t + TICK,
         n_ticks=len(sim.frames),
+        params=params,
         homes=homes,
     )
 
@@ -69,6 +101,9 @@ def tick_message(fleet: Fleet, r: TickResult) -> TickMessage:
             homes_dark_by_contract=r.homes_dark_by_contract,
             headroom_mwh=r.headroom_mwh,
             revenue_usd=round(r.revenue_usd, 2),
+            contract_pnl_usd=round(r.contract_pnl_usd, 2),
+            backup_cost_usd=round(r.backup_cost_usd, 2),
+            market_usd=round(r.market_usd, 2),
             revenue_tick_usd=round(r.revenue_tick_usd, 2),
             penalty_usd=round(r.penalty_usd, 2),
             promise_kept=r.promise_kept,

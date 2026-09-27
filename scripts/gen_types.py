@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from backend.schema import ClientMessage, ServerMessage
+from backend.schema import ClientMessage, SafeContractResponse, ServerMessage
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "schema" / "simuritor.schema.json"
@@ -29,12 +29,18 @@ BANNER = (
 
 
 def build_schema() -> dict[str, Any]:
-    """One root schema: `WireMessage = ServerMessage | ClientMessage`, all models in `$defs`."""
+    """One root schema, `Simuritor = WireMessage | SafeContractResponse`, all models in `$defs`:
+    websocket messages (`WireMessage = ServerMessage | ClientMessage`) and HTTP responses."""
     defs: dict[str, Any] = {}
-    for name, union in (("ServerMessage", ServerMessage), ("ClientMessage", ClientMessage)):
+    roots = (
+        ("ServerMessage", ServerMessage),
+        ("ClientMessage", ClientMessage),
+        ("SafeContractResponse", SafeContractResponse),
+    )
+    for name, type_ in roots:
         # Serialization mode: describes what actually goes over the wire.
-        schema = TypeAdapter(union).json_schema(mode="serialization")
-        defs.update(schema.pop("$defs"))
+        schema = TypeAdapter(type_).json_schema(mode="serialization")
+        defs.update(schema.pop("$defs", {}))
         defs[name] = {"title": name, **schema}
 
     for model in defs.values():
@@ -42,10 +48,14 @@ def build_schema() -> dict[str, Any]:
         for prop in model.get("properties", {}).values():
             prop.pop("title", None)
 
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
+    defs["WireMessage"] = {
         "title": "WireMessage",
         "anyOf": [{"$ref": "#/$defs/ServerMessage"}, {"$ref": "#/$defs/ClientMessage"}],
+    }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Simuritor",
+        "anyOf": [{"$ref": "#/$defs/WireMessage"}, {"$ref": "#/$defs/SafeContractResponse"}],
         "$defs": defs,
     }
 

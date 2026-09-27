@@ -1,6 +1,7 @@
 /* Generated from backend/schema.py by `uv run python -m scripts.gen_types`.
  * Do not edit by hand. */
 
+export type Simuritor = WireMessage | SafeContractResponse;
 export type WireMessage = ServerMessage | ClientMessage;
 export type ServerMessage = InitMessage | TickMessage;
 export type ClientMessage = PlayMessage | PauseMessage | SpeedMessage | ResetMessage;
@@ -16,7 +17,51 @@ export interface InitMessage {
    */
   end: string;
   n_ticks: number;
+  params: ReplayParams;
   homes: HomeInfo[];
+}
+/**
+ * The parameters this replay runs with (defaults filled in).
+ */
+export interface ReplayParams {
+  /**
+   * `contract`: keeps both contracts (docs/dispatch-design.md); `naive`: the price-rule baseline.
+   */
+  policy: "contract" | "naive";
+  /**
+   * Hours of backup the `standard` tier's reserve covers at the forecast temperature.
+   */
+  standard_backup_h: number;
+  /**
+   * Utility calls that may start per Central-time day.
+   */
+  max_calls_per_day: number;
+  /**
+   * During an EEA a call may start whatever `max_calls_per_day` says (the stress case).
+   */
+  emergency_uncapped: boolean;
+  /**
+   * No call while a severe cold snap is in the next 24 h forecast.
+   */
+  skip_before_storm: boolean;
+  /**
+   * Silent device faults per home-hour.
+   */
+  fault_rate: number;
+  /**
+   * Contract policy only. `keep`: energy above what the contracts need stays in the batteries;
+   * `sell`: export it when the price spikes.
+   */
+  headroom_mode: "keep" | "sell";
+  homes: number;
+  /**
+   * The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021.
+   */
+  scenario: "uri";
+  /**
+   * Utility contract size, share of fleet nameplate (homes x max kW).
+   */
+  contract: number;
 }
 /**
  * Static facts about one home, sent once in `init`.
@@ -120,9 +165,24 @@ export interface FleetStats {
    */
   headroom_mwh: number;
   /**
-   * Cumulative since replay start; charging at negative prices earns money.
+   * Cumulative net revenue since replay start: `contract_pnl_usd` - `backup_cost_usd` + `market_usd`.
+   * Charging at negative prices earns money.
    */
   revenue_usd: number;
+  /**
+   * Cumulative utility contract P&L: capacity payments + call energy (delivery up to the promise,
+   * at the interval price) - shortfall penalties.
+   */
+  contract_pnl_usd: number;
+  /**
+   * Cumulative cost of charging homes back up to their reserve (and, outside calls, call-ready
+   * for the next one), whatever the price. Negative if that charging ran at negative prices.
+   */
+  backup_cost_usd: number;
+  /**
+   * Cumulative everything else: exports beyond the promise, minus other charging (cheap fills, pre-charge).
+   */
+  market_usd: number;
   /**
    * Revenue earned this tick alone.
    */
@@ -189,4 +249,99 @@ export interface SpeedMessage {
  */
 export interface ResetMessage {
   type: "reset";
+}
+/**
+ * The largest contract the fleet can promise and keep through the storm.
+ */
+export interface SafeContractResponse {
+  params: ScenarioParams;
+  /**
+   * Every point is the mean over these replays.
+   */
+  seeds: number[];
+  /**
+   * Ascending by contract size.
+   */
+  curve: SafeContractPoint[];
+  /**
+   * `critical_ran_out` with no utility contract: what the rule compares against.
+   */
+  baseline_critical_ran_out: number;
+  /**
+   * The largest contract with `storm_kept` >= 0.95 (or no storm calls) and no more
+   * critical homes running out than with no contract; null if none qualifies.
+   */
+  safe: number | null;
+}
+/**
+ * Every replay knob except the contract size: what GET /api/safe-contract sweeps the contract over.
+ */
+export interface ScenarioParams {
+  /**
+   * `contract`: keeps both contracts (docs/dispatch-design.md); `naive`: the price-rule baseline.
+   */
+  policy: "contract" | "naive";
+  /**
+   * Hours of backup the `standard` tier's reserve covers at the forecast temperature.
+   */
+  standard_backup_h: number;
+  /**
+   * Utility calls that may start per Central-time day.
+   */
+  max_calls_per_day: number;
+  /**
+   * During an EEA a call may start whatever `max_calls_per_day` says (the stress case).
+   */
+  emergency_uncapped: boolean;
+  /**
+   * No call while a severe cold snap is in the next 24 h forecast.
+   */
+  skip_before_storm: boolean;
+  /**
+   * Silent device faults per home-hour.
+   */
+  fault_rate: number;
+  /**
+   * Contract policy only. `keep`: energy above what the contracts need stays in the batteries;
+   * `sell`: export it when the price spikes.
+   */
+  headroom_mode: "keep" | "sell";
+  homes: number;
+  /**
+   * The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021.
+   */
+  scenario: "uri";
+}
+/**
+ * One contract size, averaged over the seeds.
+ */
+export interface SafeContractPoint {
+  /**
+   * Contract size, share of fleet nameplate.
+   */
+  contract: number;
+  /**
+   * Share of called intervals kept in the storm (Feb 14-18); null if the storm had no calls.
+   */
+  storm_kept: number | null;
+  /**
+   * The same before the storm (Feb 10-12).
+   */
+  pre_kept: number | null;
+  /**
+   * Over the whole replay, as in `FleetStats`.
+   */
+  contract_pnl_usd: number;
+  /**
+   * Over the whole replay, as in `FleetStats`.
+   */
+  backup_cost_usd: number;
+  /**
+   * Failovers no other home could cover, over the whole replay.
+   */
+  uncovered: number;
+  /**
+   * Critical-tier homes whose battery ran out during an outage, over the whole replay.
+   */
+  critical_ran_out: number;
 }

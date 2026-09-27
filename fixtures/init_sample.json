@@ -3,6 +3,18 @@
   "start": "2021-02-10T00:00:00-06:00",
   "end": "2021-02-20T00:00:00-06:00",
   "n_ticks": 960,
+  "params": {
+    "policy": "contract",
+    "standard_backup_h": 8.0,
+    "max_calls_per_day": 1,
+    "emergency_uncapped": false,
+    "skip_before_storm": false,
+    "fault_rate": 0.001,
+    "headroom_mode": "keep",
+    "homes": 20,
+    "scenario": "uri",
+    "contract": 0.6
+  },
   "homes": [
     {
       "id": "h0001",

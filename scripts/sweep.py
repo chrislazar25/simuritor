@@ -10,14 +10,13 @@ Usage: uv run python -m scripts.sweep [--out results/sweep.csv]
 import argparse
 import time
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from backend.commitment import UtilityContract
-from backend.data import TZ, UriParquetSource
+from backend.data import UriParquetSource
 from backend.faults import SilentDeviceFaults
 from backend.policy import ContractPolicy
 from backend.sim import HOURS_PER_TICK, FleetConfig, uri_replay
@@ -29,11 +28,7 @@ VARIANT_CONTRACTS = (0.1, 0.3)
 """The variants run at these contract sizes, the default fault rate and every seed."""
 
 
-def ct(day: int) -> datetime:
-    return datetime(2021, 2, day, tzinfo=TZ)
-
-
-WINDOWS = {"": None, "pre_": (ct(10), ct(13)), "storm_": (ct(14), ct(19))}
+WINDOWS = {"": None, "pre_": UriParquetSource.PRE_STORM, "storm_": UriParquetSource.STORM}
 """Column prefix -> [start, end) Central time; "" is the whole replay (Feb 10-20)."""
 
 
@@ -78,11 +73,9 @@ def runs() -> list[Run]:
 
 def replay(run: Run, frames: list) -> dict:
     """One replay; its row: the run's knobs, then every metric per window."""
-    config = FleetConfig()
-    backup = tuple((tier, run.backup_standard_h if tier == "standard" else h) for tier, h in config.backup_hours)
     sim = uri_replay(
         seed=run.seed,
-        config=replace(config, backup_hours=backup),
+        config=FleetConfig().with_backup_hours("standard", run.backup_standard_h),
         frames=frames,
         contract_size=run.contract,
         fault_rate=run.fault_rate,
