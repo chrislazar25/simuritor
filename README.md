@@ -12,7 +12,9 @@ Built in 36 hours for the Base Power × AITX hackathon (tracks: **Orchestration*
 
 ![Promise kept vs contract size: normal winter week, Uri pre-storm and storm](docs/img/safe-contract.png)
 
-<!-- TODO: Loom link + a screenshot of the map at Feb 15 03:00 -->
+<!-- TODO: Loom link -->
+
+![Simuritor during Uri: Feb 16 02:00, EEA3, $8,975/MWh. Neighbourhoods on battery (amber) and dark (grey); failovers covered in 5–11 s, some not](docs/img/storm-map.png)
 
 ## What it is
 Simuritor replays **Feb 10–20, 2021** against **3,000 home batteries on real Austin homes**, one 15-minute ERCOT settlement interval per tick:
