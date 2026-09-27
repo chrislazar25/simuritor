@@ -12,7 +12,7 @@ Built in 36 hours for the Base Power × AITX hackathon (tracks: **Orchestration*
 
 ![Promise kept vs contract size: normal winter week, Uri pre-storm and storm](docs/img/safe-contract.png)
 
-<!-- TODO: Loom link -->
+**▶ [Watch the 5-minute demo on Loom](https://www.loom.com/share/2e72a407f1cb4d49aa9815822353747e)**
 
 ![Simuritor during Uri: Feb 16 02:00, EEA3, $8,975/MWh. Neighbourhoods on battery (amber) and dark (grey); failovers covered in 5–11 s, some not](docs/img/storm-map.png)
 
