@@ -11,7 +11,7 @@ Protocol:
   client -> server   connect to /ws?<ReplayParams as query params> (bad params: closed with a reason)
   server -> client   `init` once on connect and after every reset, then one `tick` per interval
   client -> server   `play` | `pause` | `speed` | `reset`
-  GET /api/safe-contract?<ScenarioParams>  -> `SafeContractResponse`
+  GET /api/safe-contract?<SweepParams>  -> `SafeContractResponse`
 """
 
 from typing import Annotated, Literal
@@ -34,9 +34,12 @@ Household = Literal["standard", "medical", "elderly", "wfh"]
 Tier = Literal["none", "standard", "critical"]
 """Homeowner backup contract: `none` goes dark off grid, `standard` keeps a reserve, `critical` a larger one."""
 
+ScenarioName = Literal["uri", "normal"]
+"""`uri`: Winter Storm Uri, Austin, Feb 10-19 2021. `normal`: an ordinary winter week, Feb 21-27 2022."""
+
 Fraction = Annotated[float, Field(ge=0, le=1)]
 
-MAX_HOMES = 2000
+MAX_HOMES = 10_000
 
 
 class Wire(BaseModel):
@@ -54,8 +57,9 @@ class Wire(BaseModel):
 # --- replay parameters (query params) -----------------------------------------
 
 
-class ScenarioParams(Wire):
-    """Every replay knob except the contract size: what GET /api/safe-contract sweeps the contract over."""
+class SweepParams(Wire):
+    """Every replay knob except the scenario and the contract size: GET /api/safe-contract's query
+    (it sweeps the contract size, in every scenario)."""
 
     policy: Literal["contract", "naive"] = "contract"
     """`contract`: keeps both contracts (docs/dispatch-design.md); `naive`: the price-rule baseline."""
@@ -72,14 +76,19 @@ class ScenarioParams(Wire):
     headroom_mode: Literal["keep", "sell"] = "keep"
     """Contract policy only. `keep`: energy above what the contracts need stays in the batteries;
     `sell`: export it when the price spikes."""
-    homes: Annotated[int, Field(ge=1, le=MAX_HOMES)] = 500
-    scenario: Literal["uri"] = "uri"
-    """The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021."""
+    homes: Annotated[int, Field(ge=1, le=MAX_HOMES)] = 3000
+    """Fleet size. 3,000 homes x 12 kW is 36 MW of nameplate, about Base's 40 MW Austin Energy deal."""
+    spread_by_domain: bool = False
+    """Contract policy only. Treat each rotating-outage block as a failure domain (⚠ assumes the
+    operator knows the utility's blocks): split a call evenly across the on-grid domains, then pro
+    rata inside one, and hold an N-1 buffer (losing the largest domain's share leaves that much
+    spare on the others) instead of the fixed 20%."""
 
 
-class ReplayParams(ScenarioParams):
+class ReplayParams(SweepParams):
     """One replay's knobs: the /ws query params, echoed in `init`."""
 
+    scenario: ScenarioName = "uri"
     contract: Fraction = 0.3
     """Utility contract size, share of fleet nameplate (homes x max kW)."""
 
@@ -143,10 +152,11 @@ class FleetStats(Wire):
     Charging at negative prices earns money."""
     contract_pnl_usd: float
     """Cumulative utility contract P&L: capacity payments + call energy (delivery up to the promise,
-    at the interval price) - shortfall penalties."""
+    at the interval price) - shortfall penalties - the cost of charging homes call-ready for the
+    next call outside calls (it exists for the contract)."""
     backup_cost_usd: float
-    """Cumulative cost of charging homes back up to their reserve (and, outside calls, call-ready
-    for the next one), whatever the price. Negative if that charging ran at negative prices."""
+    """Cumulative cost of charging homes back up to their reserve, whatever the price. Negative if
+    that charging ran at negative prices."""
     market_usd: float
     """Cumulative everything else: exports beyond the promise, minus other charging (cheap fills, pre-charge)."""
     revenue_tick_usd: float
@@ -213,14 +223,15 @@ ServerMessage = Annotated[InitMessage | TickMessage, Field(discriminator="type")
 
 
 class SafeContractPoint(Wire):
-    """One contract size, averaged over the seeds."""
+    """One contract size in one scenario, averaged over the seeds."""
 
     contract: Fraction
     """Contract size, share of fleet nameplate."""
-    storm_kept: Fraction | None
-    """Share of called intervals kept in the storm (Feb 14-18); null if the storm had no calls."""
+    kept: Fraction | None
+    """Share of called intervals kept in the scenario's test window (`uri`: the storm, Feb 14-18;
+    `normal`: the whole week); null if the window had no calls."""
     pre_kept: Fraction | None
-    """The same before the storm (Feb 10-12)."""
+    """`uri` only: the same before the storm (Feb 10-12). Null for `normal`, or with no calls."""
     contract_pnl_usd: float
     """Over the whole replay, as in `FleetStats`."""
     backup_cost_usd: float
@@ -231,19 +242,27 @@ class SafeContractPoint(Wire):
     """Critical-tier homes whose battery ran out during an outage, over the whole replay."""
 
 
-class SafeContractResponse(Wire):
-    """The largest contract the fleet can promise and keep through the storm."""
+class SafeContractCurve(Wire):
+    """Contract size against promise kept and money in one scenario, and the largest safe size."""
 
-    params: ScenarioParams
-    seeds: list[int]
-    """Every point is the mean over these replays."""
+    scenario: ScenarioName
     curve: list[SafeContractPoint]
     """Ascending by contract size."""
     baseline_critical_ran_out: Annotated[float, Field(ge=0)]
     """`critical_ran_out` with no utility contract: what the rule compares against."""
     safe: Fraction | None
-    """The largest contract with `storm_kept` >= 0.95 (or no storm calls) and no more
-    critical homes running out than with no contract; null if none qualifies."""
+    """The largest contract with `kept` >= 0.95 (or no calls) and no more critical homes running
+    out than with no contract; null if none qualifies."""
+
+
+class SafeContractResponse(Wire):
+    """The largest contract the fleet can promise and keep, in a crisis and in a normal week."""
+
+    params: SweepParams
+    seeds: list[int]
+    """Every point is the mean over these replays."""
+    scenarios: list[SafeContractCurve]
+    """One per scenario: `uri`, then `normal`."""
 
 
 # --- client -> server ---------------------------------------------------------

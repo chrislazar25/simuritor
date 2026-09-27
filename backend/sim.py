@@ -7,20 +7,23 @@ and others cover for them (`backend/failover.py`) -> accounting. The sim keeps i
 one entry per home); `backend/serialize.py` turns it into wire messages.
 """
 
+import functools
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from backend.commitment import CommitmentSource, UtilityContract
-from backend.data import HOURS_PER_TICK, Frame, UriParquetSource
+from backend.data import DATA_DIR, HOURS_PER_TICK, AustinParquetSource, Frame, NormalWeekSource, UriParquetSource
 from backend.failover import Failover, FailoverConfig, drop_outs, run_tick
-from backend.faults import DeviceFaults, Fault, RollingOutage, SilentDeviceFaults
+from backend.faults import DeviceFaults, Fault, RollingOutage, SilentDeviceFaults, feeders
 from backend.policy import POLICIES, FleetView, Policy
-from backend.schema import Household, Tier
+from backend.schema import Household, ScenarioName, Tier
 
 SLACK_MW = 1e-9
 """Delivery this close to the promise counts as kept (float sums)."""
@@ -31,8 +34,13 @@ class FleetConfig:
     """Spec defaults (docs/slice-spec.md); ⚠ marks assumptions to state in the README."""
 
     n_homes: int = 500
+    homes_file: Path | None = DATA_DIR / "austin_homes.parquet"
+    """Real residential building sites to place homes on (`scripts/fetch_homes.py`); None, or a
+    missing file, places them uniformly at random in the ranges below."""
     lat_range: tuple[float, float] = (30.15, 30.45)
     lon_range: tuple[float, float] = (-97.90, -97.60)
+    n_feeders: int = 40
+    """⚠ Neighbourhood feeders the fleet is clustered into (`backend.faults.feeders`); outages cut whole feeders."""
     capacity_mix: tuple[tuple[float, float], ...] = ((25.0, 0.6), (39.2, 0.4))
     """(kWh, share): Base Gen2 and Core batteries."""
     household_mix: tuple[tuple[Household, float], ...] = (
@@ -104,6 +112,16 @@ def forecast_min_f(frames: Sequence[Frame], i: int, hours: float) -> float:
     return min(f.temp_f for f in frames[i : i + n])
 
 
+@functools.cache
+def home_sites(path: Path | None) -> np.ndarray | None:
+    """(lat, lon) rows from `path`; None if there's no file."""
+    if path is None or not path.exists():
+        return None
+    sites = pd.read_parquet(path, columns=["lat", "lon"]).to_numpy()
+    sites.setflags(write=False)
+    return sites
+
+
 def read_only(a: np.ndarray) -> np.ndarray:
     a.setflags(write=False)
     return a
@@ -116,14 +134,23 @@ class Fleet:
         n = config.n_homes
         self.config = config
         self.ids = [f"h{k:04d}" for k in range(n)]
-        self.lat = read_only(rng.uniform(*config.lat_range, n))
-        self.lon = read_only(rng.uniform(*config.lon_range, n))
+        sites = home_sites(config.homes_file)
+        if sites is None:
+            self.lat = read_only(rng.uniform(*config.lat_range, n))
+            self.lon = read_only(rng.uniform(*config.lon_range, n))
+        else:
+            if n > len(sites):
+                raise ValueError(f"{n} homes but only {len(sites)} sites in {config.homes_file}")
+            lat, lon = sites[np.sort(rng.choice(len(sites), n, replace=False))].T
+            self.lat, self.lon = read_only(lat.copy()), read_only(lon.copy())
         self.capacity_kwh = read_only(exact_mix(config.capacity_mix, n, rng))
         self.household = read_only(exact_mix(config.household_mix, n, rng))
         self.drain_factor = read_only(rng.uniform(1 - config.drain_noise, 1 + config.drain_noise, n))
         self.soc = read_only(rng.uniform(*config.start_soc, n))
         # Drawn last so adding tiers left every earlier draw (and the replay) unchanged.
         self.tier = read_only(assign_tiers(config.tier_mix, self.household, rng))
+        self.feeder = read_only(feeders(self.lat, self.lon, config.n_feeders, rng))
+        """Each home's feeder, 0 to `n_feeders` - 1 (drawn last, like the tiers)."""
 
     def __len__(self) -> int:
         return len(self.ids)
@@ -181,12 +208,13 @@ class TickResult:
     revenue_usd: float
     """Cumulative net revenue: `contract_pnl_usd` - `backup_cost_usd` + `market_usd`."""
     contract_pnl_usd: float
-    """Cumulative: capacity payments + call energy (delivery up to the promise, at the price) - penalties."""
+    """Cumulative: capacity payments + call energy (delivery up to the promise, at the price) - penalties
+    - charging between the policy's refill and call-ready levels (`Decisions.call_ready_kwh`)."""
     backup_cost_usd: float
-    """Cumulative cost of charging homes back up to the policy's refill level (`Decisions.refill_kwh`:
-    the reserve, and call-ready outside calls). Negative when that charging ran at negative prices."""
+    """Cumulative cost of charging homes back up to the policy's refill level (`Decisions.refill_kwh`,
+    the reserve). Negative when that charging ran at negative prices."""
     market_usd: float
-    """Cumulative everything else: exports beyond the promise, minus imports above the refill level."""
+    """Cumulative everything else: exports beyond the promise, minus imports above the call-ready level."""
     penalty_usd: float
     """Cumulative shortfall penalties."""
     kept: bool
@@ -206,11 +234,11 @@ class TickResult:
 
 
 class Sim:
-    """Steps a fleet through a list of frames, one tick per `step()`."""
+    """Steps a fleet through a sequence of frames, one tick per `step()`."""
 
     def __init__(
         self,
-        frames: list[Frame],
+        frames: Sequence[Frame],
         fleet: Fleet,
         policy: Policy,
         faults: Sequence[Fault],
@@ -218,8 +246,10 @@ class Sim:
         devices: DeviceFaults | None = None,
         rng: np.random.Generator | None = None,
         failover: FailoverConfig = FailoverConfig(),
+        domain: np.ndarray | None = None,
     ) -> None:
-        """`rng` draws the failover timeline's random seconds and outage notices."""
+        """`rng` draws the failover timeline's random seconds and outage notices. `domain`: each
+        home's failure domain as the operator knows it (`FleetView.domain`)."""
         if not frames:
             raise ValueError("no frames to replay")
         self.frames = frames
@@ -230,6 +260,7 @@ class Sim:
         self.devices = devices
         self.rng = np.random.default_rng(0) if rng is None else rng
         self.failover = failover
+        self.domain = domain
         self.i = 0
         self.revenue_usd = 0.0
         self.contract_pnl_usd = 0.0
@@ -278,6 +309,7 @@ class Sim:
             max_kw=cfg.max_kw,
             commitment=owed,
             forecast_min_f=forecast,
+            domain=self.domain,
         )
         decisions = self.policy.decide(frame, view)
 
@@ -320,10 +352,13 @@ class Sim:
         backed_up = np.where(action == "backup", np.minimum(house_kwh, np.minimum(energy, max_kwh)), 0.0)
         moved = exported + imported + backed_up
         to_floor = np.minimum(imported, np.maximum(export_floor - energy, 0.0))
+        to_refill = np.zeros(len(fleet))
         if decisions.refill_kwh is not None:
-            self.backup_cost_usd += float(
-                np.minimum(imported, np.maximum(decisions.refill_kwh - energy, 0.0)).sum() / 1000 * frame.price
-            )
+            to_refill = np.minimum(imported, np.maximum(decisions.refill_kwh - energy, 0.0))
+            self.backup_cost_usd += float(to_refill.sum() / 1000 * frame.price)
+        if decisions.call_ready_kwh is not None:
+            to_ready = np.minimum(imported, np.maximum(decisions.call_ready_kwh - energy, 0.0)) - to_refill
+            self.contract_pnl_usd -= float(np.maximum(to_ready, 0.0).sum() / 1000 * frame.price)
         # An action that moved no energy (e.g. a dark home) is reported as hold.
         action = read_only(np.where(moved > 0, action, "hold"))
 
@@ -402,21 +437,43 @@ class Sim:
         return read_only(grid)
 
 
-def uri_replay(
+@dataclass(frozen=True)
+class Scenario:
+    """A crisis (or a calm) to replay: where the frames come from and what goes wrong."""
+
+    source: AustinParquetSource
+    rolling_outage: bool
+    """Uri's rotating and never-restored outages (`RollingOutage`); otherwise only device faults."""
+
+
+SCENARIOS: dict[ScenarioName, Scenario] = {
+    "uri": Scenario(UriParquetSource(), rolling_outage=True),
+    "normal": Scenario(NormalWeekSource(), rolling_outage=False),
+}
+
+
+@functools.cache
+def scenario_frames(scenario: ScenarioName) -> tuple[Frame, ...]:
+    """The scenario's frames, read once per process."""
+    return tuple(SCENARIOS[scenario].source.frames())
+
+
+def build_replay(
+    scenario: ScenarioName = "uri",
     seed: int = 0,
     config: FleetConfig = FleetConfig(),
-    frames: list[Frame] | None = None,
+    frames: Sequence[Frame] | None = None,
     policy: str = "contract",
     contract_size: float | None = UtilityContract.size_frac,
     fault_rate: float = SilentDeviceFaults.rate_per_home_hour,
     policy_options: dict[str, Any] | None = None,
     **contract_options: Any,
 ) -> Sim:
-    """Tonight's wiring: Uri frames, a seeded fleet, a policy from `POLICIES` (with any
-    `policy_options`, e.g. `headroom_mode="sell"`), rolling outages,
-    silent device faults at `fault_rate` per home-hour, and a utility contract of `contract_size`
-    x nameplate (None: no contract, `promised_mw` null) with any other `UtilityContract` options
-    (e.g. `emergency_uncapped=True`).
+    """A replay of `SCENARIOS[scenario]`: its frames (unless `frames` is given), a seeded fleet, a
+    policy from `POLICIES` (with any `policy_options`, e.g. `headroom_mode="sell"`), the scenario's
+    rolling outages if it has them, silent device faults at `fault_rate` per home-hour, and a
+    utility contract of `contract_size` x nameplate (None: no contract, `promised_mw` null) with
+    any other `UtilityContract` options (e.g. `emergency_uncapped=True`).
 
     One seed, split into independent streams, so the fleet, the outage, the device faults and the
     failover timeline don't reshuffle each other.
@@ -426,14 +483,19 @@ def uri_replay(
     )
     fleet = Fleet(config, fleet_rng)
     nameplate_mw = config.n_homes * config.max_kw / 1000
+    chosen = SCENARIOS[scenario]
+    # Built in every scenario: its groups are the utility's rotation blocks, the failure domains a
+    # policy may plan around, whether or not anything rotates.
+    outage = RollingOutage(fleet.feeder, fault_rng)
     return Sim(
-        frames=UriParquetSource().frames() if frames is None else frames,
+        frames=scenario_frames(scenario) if frames is None else frames,
         fleet=fleet,
         policy=POLICIES[policy](**(policy_options or {})),
-        faults=[RollingOutage(len(fleet), fault_rng)],
+        faults=[outage] if chosen.rolling_outage else [],
         commitment=None
         if contract_size is None
         else UtilityContract(nameplate_mw, size_frac=contract_size, **contract_options),
         devices=SilentDeviceFaults(len(fleet), device_rng, rate_per_home_hour=fault_rate),
         rng=failover_rng,
+        domain=outage.group,
     )

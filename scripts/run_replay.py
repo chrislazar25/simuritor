@@ -1,6 +1,8 @@
-"""Run the full Uri replay headless and print a daily summary.
+"""Run a full replay headless (Uri by default) and print a daily summary.
 
-Usage: uv run python -m scripts.run_replay [--seed N] [--homes N] [--policy contract|naive]
+Defaults (homes, contract size) are the served replay's, `ReplayParams`.
+
+Usage: uv run python -m scripts.run_replay [--scenario uri|normal] [--seed N] [--homes N] [--policy contract|naive]
        [--contract-size FRAC | --no-contract] [--emergency-uncapped] [--skip-before-storm]
        [--fault-rate RATE] [--headroom-mode keep|sell]
 """
@@ -11,20 +13,20 @@ import time
 import numpy as np
 import pandas as pd
 
-from backend.commitment import UtilityContract
 from backend.faults import SilentDeviceFaults
 from backend.policy import POLICIES, ContractPolicy
-from backend.sim import HOURS_PER_TICK, FleetConfig, uri_replay
+from backend.schema import ReplayParams, ScenarioName
+from backend.sim import HOURS_PER_TICK, SCENARIOS, FleetConfig, build_replay
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    defaults = ReplayParams()
+    parser.add_argument("--scenario", choices=SCENARIOS, default=defaults.scenario)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--homes", type=int, default=FleetConfig().n_homes)
-    parser.add_argument("--policy", choices=POLICIES, default="contract")
-    parser.add_argument(
-        "--contract-size", type=float, default=UtilityContract.size_frac, help="share of fleet nameplate"
-    )
+    parser.add_argument("--homes", type=int, default=defaults.homes)
+    parser.add_argument("--policy", choices=POLICIES, default=defaults.policy)
+    parser.add_argument("--contract-size", type=float, default=defaults.contract, help="share of fleet nameplate")
     parser.add_argument("--no-contract", action="store_true", help="no utility contract (promised_mw null)")
     parser.add_argument(
         "--emergency-uncapped", action="store_true", help="during an EEA, ignore the daily call limit"
@@ -50,7 +52,9 @@ def main() -> None:
     options = {"emergency_uncapped": args.emergency_uncapped, "skip_before_storm": args.skip_before_storm}
     if contract_size is None:
         options = {}
-    sim = uri_replay(
+    scenario: ScenarioName = args.scenario
+    sim = build_replay(
+        scenario=scenario,
         seed=args.seed,
         config=FleetConfig(n_homes=args.homes),
         policy=args.policy,
@@ -111,7 +115,7 @@ def main() -> None:
         contract += f", {args.headroom_mode} headroom"
     contract += "".join(f", {name.replace('_', ' ')}" for name, on in options.items() if on)
     print(
-        f"Uri replay: {len(df)} ticks, {args.homes} homes, seed {args.seed}, "
+        f"{scenario} replay: {len(df)} ticks, {args.homes} homes, seed {args.seed}, "
         f"{args.policy} policy, {contract}, {args.fault_rate:g} device faults/home-h, {elapsed * 1000:.0f} ms\n"
     )
     with pd.option_context("display.width", 200):

@@ -8,7 +8,7 @@ import pytest
 
 from backend.commitment import Commitment
 from backend.data import TZ, Frame
-from backend.policy import ContractPolicy, Decisions, FleetView, NaivePolicy, Policy, pro_rata
+from backend.policy import ContractPolicy, Decisions, FleetView, NaivePolicy, Policy, by_domain, n_minus_1, pro_rata
 
 
 def frame(price: float) -> Frame:
@@ -24,6 +24,7 @@ def view(
     contract_mw: float | None = None,
     forecast_f: float = 50.0,
     faulted: list[bool] | None = None,
+    domain: list[int] | None = None,
 ) -> FleetView:
     """40 kWh homes, 12 kW max, a 5% reserve floor so the contract reserve is what binds.
 
@@ -55,6 +56,7 @@ def view(
             capacity_usd=0.0,
         ),
         forecast_min_f=lambda hours: forecast_f,
+        domain=None if domain is None else np.array(domain),
     )
 
 
@@ -186,6 +188,17 @@ def test_call_ready_recharge_is_capped_at_the_room_above_the_floor() -> None:
     assert contract(price=9000, fleet=view([1.0], reserve_kwh=[35], contract_mw=0.012))[0] == ["hold"]
 
 
+def test_refill_is_the_reserve_and_call_ready_adds_the_next_call() -> None:
+    """The sim books charging below `refill_kwh` as backup and up to `call_ready_kwh` as contract cost.
+    Outside a call: reserve 20 kWh, then 4 kW x 1.2 x 1.5 h = 7.2 kWh call-ready. In a call: the reserve only."""
+    d = decide(ContractPolicy(), 9000, view([0.5], reserve_kwh=[20], contract_mw=0.004))
+    assert d.refill_kwh.tolist() == [20.0] and d.call_ready_kwh.tolist() == pytest.approx([27.2])
+    d = decide(ContractPolicy(), 9000, view([0.5], reserve_kwh=[20], promised_mw=0.004))
+    assert d.refill_kwh.tolist() == d.call_ready_kwh.tolist() == [20.0]
+    off = decide(ContractPolicy(), 9000, view([0.5], grid=[False], reserve_kwh=[20], contract_mw=0.004))
+    assert off.refill_kwh.tolist() == off.call_ready_kwh.tolist() == [0.0]  # off grid: nothing to charge from
+
+
 def test_no_call_ready_recharge_during_a_call() -> None:
     """During a call only the reserve is recovered: charging would net against the fleet's delivery."""
     fleet = view([0.5, 0.5], reserve_kwh=[20, 21], promised_mw=0.004)
@@ -280,3 +293,67 @@ def test_keep_still_charges_when_cheap_and_recovers_the_reserve() -> None:
     action, kw = contract(price=30, fleet=view([0.5]))
     assert action == ["charge"] and np.isnan(kw[0])
     assert contract(price=9000, fleet=view([0.5], reserve_kwh=[21])) == (["charge"], pytest.approx([4.0]))
+
+
+# --- Failure domains (spread_by_domain) ----------------------------------------
+
+
+def test_by_domain_splits_evenly_across_domains_then_pro_rata_inside() -> None:
+    weight, cap = np.array([20.0, 10.0, 10.0, 10.0]), np.full(4, 100.0)
+    share, per_domain = by_domain(30.0, weight, cap, domain=np.array([0, 0, 1, 2]))
+    assert per_domain.tolist() == [10.0, 10.0, 10.0]
+    assert share.tolist() == pytest.approx([20 / 3, 10 / 3, 10.0, 10.0])
+
+
+def test_by_domain_passes_a_capped_domains_excess_on_and_skips_empty_domains() -> None:
+    domain = np.array([0, 0, 1, 2])
+    share, per_domain = by_domain(30.0, np.array([20.0, 10.0, 10.0, 10.0]), np.array([100, 100, 4, 100.0]), domain)
+    assert per_domain.tolist() == [13.0, 4.0, 13.0] and share.sum() == pytest.approx(30.0)
+    share, per_domain = by_domain(30.0, np.array([20.0, 10.0, 0.0, 10.0]), np.full(4, 100.0), domain)
+    assert per_domain.tolist() == [15.0, 0.0, 15.0] and share[2] == 0  # domain 1 has nothing above its floor
+
+
+@pytest.mark.parametrize(
+    ("per_domain", "buffer"),
+    [
+        ([10, 10, 10], 0.5),  # losing one leaves 20 x 0.5 = 10 spare on the other two
+        ([10] * 5, 0.25),
+        ([20, 10], 2.0),  # the 20 must be covered by the 10's buffer
+        ([10, 10, 0], 1.0),  # an empty domain doesn't count
+        ([30], 0.2),  # one domain: nothing else can cover it, so the fallback
+    ],
+)
+def test_n_minus_1_buffer_covers_the_largest_domain_from_the_others(per_domain: list[float], buffer: float) -> None:
+    assert n_minus_1(np.array(per_domain, dtype=float), fallback=0.2) == pytest.approx(buffer)
+
+
+def test_spread_by_domain_splits_a_call_across_domains_not_charge() -> None:
+    """20, 10 and 10 kWh above reserve; homes 0-1 in one domain, home 2 in another. Pro rata to
+    energy, a 12 kW call is 6 / 3 / 3 kW; spread by domain, 6 kW each domain: 4 / 2 / 6."""
+    fleet = view([0.55, 0.5, 0.5], reserve_kwh=[2, 10, 10], promised_mw=0.012, domain=[0, 0, 1])
+    assert decide(ContractPolicy(), 500, fleet).call_kw.tolist() == pytest.approx([6.0, 3.0, 3.0])
+    spread = decide(ContractPolicy(spread_by_domain=True), 500, fleet)
+    assert spread.call_kw.tolist() == pytest.approx([4.0, 2.0, 6.0])
+
+
+def test_spread_by_domain_holds_an_n_minus_1_buffer() -> None:
+    """Two even domains: the buffer is the whole share (N-1), so selling headroom leaves each home
+    12 - 2 x 3 kW; the default 20% buffer leaves 12 - 1.2 x 3."""
+    fleet = view([0.9, 0.9], promised_mw=0.006, domain=[0, 1])
+    _, kw = contract(price=9000, fleet=fleet, headroom_mode="sell", spread_by_domain=True)
+    assert kw == pytest.approx([3.0 + 6.0, 3.0 + 6.0])
+    _, kw = contract(price=9000, fleet=fleet, headroom_mode="sell")
+    assert kw == pytest.approx([3.0 + 8.4, 3.0 + 8.4])
+
+
+def test_spread_by_domain_plans_the_next_call_by_domain_with_the_n_minus_1_buffer() -> None:
+    """At their reserve, homes 0-1 in one domain and home 2 in another: a 12 kW contract plans
+    6 kW per domain (3 / 3 / 6 kW), kept 1.5 h with a buffer of 1: 9 / 9 / 18 kWh call-ready."""
+    fleet = view([0.5, 0.5, 0.5], reserve_kwh=[20, 20, 20], contract_mw=0.012, domain=[0, 0, 1])
+    d = decide(ContractPolicy(spread_by_domain=True), 9000, fleet)
+    assert d.call_ready_kwh.tolist() == pytest.approx([29.0, 29.0, 38.0])
+
+
+def test_spread_by_domain_needs_the_domains() -> None:
+    with pytest.raises(ValueError, match="failure domain"):
+        decide(ContractPolicy(spread_by_domain=True), 500, view([0.5], promised_mw=0.004))

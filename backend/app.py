@@ -17,14 +17,15 @@ import multiprocessing
 import os
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import ProcessPoolExecutor
 from typing import Annotated, Protocol
 
+import anyio
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
 
-from backend.safe_contract import CONTRACTS, SEEDS, safe_contract
+from backend.safe_contract import CONTRACTS, SCENARIO_ORDER, SEEDS, safe_contract
 from backend.schema import (
     ClientMessage,
     InitMessage,
@@ -33,7 +34,7 @@ from backend.schema import (
     ReplayParams,
     ResetMessage,
     SafeContractResponse,
-    ScenarioParams,
+    SweepParams,
     SpeedMessage,
     TickMessage,
     client_message,
@@ -45,6 +46,9 @@ DEFAULT_TICKS_PER_SEC = 8.0
 MAX_CLOSE_REASON_BYTES = 123
 """The websocket protocol's limit on a close frame's reason."""
 SAFE_CONTRACT_CACHE_SIZE = 64
+WARM_SAFE_CONTRACT = (SweepParams(), SweepParams(skip_before_storm=True))
+"""Safe-contract answers computed in the background at startup (the defaults, and the defaults with
+the storm clause), so the first requests for them don't wait ~12 s."""
 
 # uvicorn configures this logger, so our lines show up in the server console.
 log = logging.getLogger("uvicorn.error")
@@ -54,21 +58,25 @@ log = logging.getLogger("uvicorn.error")
 def replay_pool() -> ProcessPoolExecutor:
     """Worker processes for headless replays, started on first use. Spawned, not forked: the
     server process runs threads."""
-    workers = min(os.cpu_count() or 1, (len(CONTRACTS) + 1) * len(SEEDS))
+    workers = min(os.cpu_count() or 1, len(SCENARIO_ORDER) * (len(CONTRACTS) + 1) * len(SEEDS))
     return ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"))
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    warming = [safe_contract_task(params) for params in WARM_SAFE_CONTRACT]
     yield
+    for task in warming:
+        task.cancel()
     if replay_pool.cache_info().currsize:
         replay_pool().shutdown(cancel_futures=True)
         replay_pool.cache_clear()
 
 
 app = FastAPI(title="Simuritor", lifespan=lifespan)
-safe_contract_cache: OrderedDict[ScenarioParams, SafeContractResponse] = OrderedDict()
-"""Least recently used last out, `SAFE_CONTRACT_CACHE_SIZE` entries."""
+safe_contract_cache: OrderedDict[SweepParams, asyncio.Task[SafeContractResponse]] = OrderedDict()
+"""Finished or running computations by params, so concurrent requests share one. Least recently
+used out first, `SAFE_CONTRACT_CACHE_SIZE` entries."""
 
 
 class Session(Protocol):
@@ -146,20 +154,36 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/safe-contract")
-async def get_safe_contract(params: Annotated[ScenarioParams, Query()]) -> SafeContractResponse:
-    """Promise kept, contract P&L and backup cost against contract size, and the largest safe
-    contract (`backend/safe_contract.py`). Cached by params."""
-    if params in safe_contract_cache:
+def safe_contract_task(params: SweepParams) -> asyncio.Task[SafeContractResponse]:
+    """The cached computation for `params`, started if there's none (or the last one failed)."""
+    task = safe_contract_cache.get(params)
+    if task is not None and not (task.done() and (task.cancelled() or task.exception() is not None)):
         safe_contract_cache.move_to_end(params)
-        return safe_contract_cache[params]
-    started = time.perf_counter()
-    response = await safe_contract(params, replay_pool())
-    log.info("safe-contract in %.1f s: %s", time.perf_counter() - started, params.model_dump_json())
-    safe_contract_cache[params] = response
+        return task
+    task = asyncio.create_task(timed_safe_contract(params))
+    safe_contract_cache[params] = task
     if len(safe_contract_cache) > SAFE_CONTRACT_CACHE_SIZE:
         safe_contract_cache.popitem(last=False)
+    return task
+
+
+async def timed_safe_contract(params: SweepParams) -> SafeContractResponse:
+    started = time.perf_counter()
+    try:
+        response = await safe_contract(params, replay_pool())
+    except Exception:
+        log.exception("safe-contract failed: %s", params.model_dump_json())  # a warm-up has no caller to see it
+        raise
+    log.info("safe-contract in %.1f s: %s", time.perf_counter() - started, params.model_dump_json())
     return response
+
+
+@app.get("/api/safe-contract")
+async def get_safe_contract(params: Annotated[SweepParams, Query()]) -> SafeContractResponse:
+    """Promise kept, contract P&L and backup cost against contract size, and the largest safe
+    contract (`backend/safe_contract.py`). Cached by params; the defaults are warmed at startup."""
+    # Shielded: a client giving up doesn't cancel a computation others may be waiting on.
+    return await asyncio.shield(safe_contract_task(params))
 
 
 @app.websocket("/ws")
@@ -172,18 +196,17 @@ async def replay_socket(websocket: WebSocket) -> None:
         await websocket.close(status.WS_1008_POLICY_VIOLATION, close_reason(err))
         return
     session: Session = ReplaySession(params)
-    tasks = [
-        asyncio.create_task(send_all(websocket, session)),
-        asyncio.create_task(receive_all(websocket, session)),
-    ]
-    # Whichever side stops first (usually the client disconnecting) ends the session.
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
-    for task in done:
-        with contextlib.suppress(WebSocketDisconnect):
-            task.result()
+    # A task group, not bare tasks, so a cancelled handler (server shutdown, a test client closing)
+    # takes both halves down with it instead of leaving them orphaned mid-send.
+    async with anyio.create_task_group() as group:
+
+        async def run(half: Callable[[WebSocket, Session], Awaitable[None]]) -> None:
+            with contextlib.suppress(WebSocketDisconnect):
+                await half(websocket, session)
+            group.cancel_scope.cancel()  # whichever side stops first (usually the client leaving) ends the session
+
+        group.start_soon(run, send_all)
+        group.start_soon(run, receive_all)
 
 
 def close_reason(err: ValidationError) -> str:

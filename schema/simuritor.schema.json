@@ -116,11 +116,11 @@
           "type": "number"
         },
         "contract_pnl_usd": {
-          "description": "Cumulative utility contract P&L: capacity payments + call energy (delivery up to the promise,\nat the interval price) - shortfall penalties.",
+          "description": "Cumulative utility contract P&L: capacity payments + call energy (delivery up to the promise,\nat the interval price) - shortfall penalties - the cost of charging homes call-ready for the\nnext call outside calls (it exists for the contract).",
           "type": "number"
         },
         "backup_cost_usd": {
-          "description": "Cumulative cost of charging homes back up to their reserve (and, outside calls, call-ready\nfor the next one), whatever the price. Negative if that charging ran at negative prices.",
+          "description": "Cumulative cost of charging homes back up to their reserve, whatever the price. Negative if\nthat charging ran at negative prices.",
           "type": "number"
         },
         "market_usd": {
@@ -426,15 +426,23 @@
           "type": "string"
         },
         "homes": {
-          "default": 500,
-          "maximum": 2000,
+          "default": 3000,
+          "description": "Fleet size. 3,000 homes x 12 kW is 36 MW of nameplate, about Base's 40 MW Austin Energy deal.",
+          "maximum": 10000,
           "minimum": 1,
           "type": "integer"
         },
+        "spread_by_domain": {
+          "default": false,
+          "description": "Contract policy only. Treat each rotating-outage block as a failure domain (\u26a0 assumes the\noperator knows the utility's blocks): split a call evenly across the on-grid domains, then pro\nrata inside one, and hold an N-1 buffer (losing the largest domain's share leaves that much\nspare on the others) instead of the fixed 20%.",
+          "type": "boolean"
+        },
         "scenario": {
-          "const": "uri",
           "default": "uri",
-          "description": "The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021.",
+          "enum": [
+            "uri",
+            "normal"
+          ],
           "type": "string"
         },
         "contract": {
@@ -454,6 +462,7 @@
         "fault_rate",
         "headroom_mode",
         "homes",
+        "spread_by_domain",
         "scenario",
         "contract"
       ],
@@ -635,17 +644,30 @@
         }
       ]
     },
-    "SafeContractPoint": {
+    "SafeContractCurve": {
       "additionalProperties": false,
-      "description": "One contract size, averaged over the seeds.",
+      "description": "Contract size against promise kept and money in one scenario, and the largest safe size.",
       "properties": {
-        "contract": {
-          "description": "Contract size, share of fleet nameplate.",
-          "maximum": 1,
+        "scenario": {
+          "enum": [
+            "uri",
+            "normal"
+          ],
+          "type": "string"
+        },
+        "curve": {
+          "description": "Ascending by contract size.",
+          "items": {
+            "$ref": "#/$defs/SafeContractPoint"
+          },
+          "type": "array"
+        },
+        "baseline_critical_ran_out": {
+          "description": "`critical_ran_out` with no utility contract: what the rule compares against.",
           "minimum": 0,
           "type": "number"
         },
-        "storm_kept": {
+        "safe": {
           "anyOf": [
             {
               "maximum": 1,
@@ -656,7 +678,40 @@
               "type": "null"
             }
           ],
-          "description": "Share of called intervals kept in the storm (Feb 14-18); null if the storm had no calls."
+          "description": "The largest contract with `kept` >= 0.95 (or no calls) and no more critical homes running\nout than with no contract; null if none qualifies."
+        }
+      },
+      "required": [
+        "scenario",
+        "curve",
+        "baseline_critical_ran_out",
+        "safe"
+      ],
+      "title": "SafeContractCurve",
+      "type": "object"
+    },
+    "SafeContractPoint": {
+      "additionalProperties": false,
+      "description": "One contract size in one scenario, averaged over the seeds.",
+      "properties": {
+        "contract": {
+          "description": "Contract size, share of fleet nameplate.",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "kept": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Share of called intervals kept in the scenario's test window (`uri`: the storm, Feb 14-18;\n`normal`: the whole week); null if the window had no calls."
         },
         "pre_kept": {
           "anyOf": [
@@ -669,7 +724,7 @@
               "type": "null"
             }
           ],
-          "description": "The same before the storm (Feb 10-12)."
+          "description": "`uri` only: the same before the storm (Feb 10-12). Null for `normal`, or with no calls."
         },
         "contract_pnl_usd": {
           "description": "Over the whole replay, as in `FleetStats`.",
@@ -692,7 +747,7 @@
       },
       "required": [
         "contract",
-        "storm_kept",
+        "kept",
         "pre_kept",
         "contract_pnl_usd",
         "backup_cost_usd",
@@ -702,9 +757,9 @@
       "title": "SafeContractPoint",
       "type": "object"
     },
-    "ScenarioParams": {
+    "SweepParams": {
       "additionalProperties": false,
-      "description": "Every replay knob except the contract size: what GET /api/safe-contract sweeps the contract over.",
+      "description": "Every replay knob except the scenario and the contract size: GET /api/safe-contract's query\n(it sweeps the contract size, in every scenario).",
       "properties": {
         "policy": {
           "default": "contract",
@@ -756,16 +811,16 @@
           "type": "string"
         },
         "homes": {
-          "default": 500,
-          "maximum": 2000,
+          "default": 3000,
+          "description": "Fleet size. 3,000 homes x 12 kW is 36 MW of nameplate, about Base's 40 MW Austin Energy deal.",
+          "maximum": 10000,
           "minimum": 1,
           "type": "integer"
         },
-        "scenario": {
-          "const": "uri",
-          "default": "uri",
-          "description": "The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021.",
-          "type": "string"
+        "spread_by_domain": {
+          "default": false,
+          "description": "Contract policy only. Treat each rotating-outage block as a failure domain (\u26a0 assumes the\noperator knows the utility's blocks): split a call evenly across the on-grid domains, then pro\nrata inside one, and hold an N-1 buffer (losing the largest domain's share leaves that much\nspare on the others) instead of the fixed 20%.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -777,18 +832,18 @@
         "fault_rate",
         "headroom_mode",
         "homes",
-        "scenario"
+        "spread_by_domain"
       ],
-      "title": "ScenarioParams",
+      "title": "SweepParams",
       "type": "object"
     },
     "SafeContractResponse": {
       "title": "SafeContractResponse",
       "additionalProperties": false,
-      "description": "The largest contract the fleet can promise and keep through the storm.",
+      "description": "The largest contract the fleet can promise and keep, in a crisis and in a normal week.",
       "properties": {
         "params": {
-          "$ref": "#/$defs/ScenarioParams"
+          "$ref": "#/$defs/SweepParams"
         },
         "seeds": {
           "description": "Every point is the mean over these replays.",
@@ -797,38 +852,18 @@
           },
           "type": "array"
         },
-        "curve": {
-          "description": "Ascending by contract size.",
+        "scenarios": {
+          "description": "One per scenario: `uri`, then `normal`.",
           "items": {
-            "$ref": "#/$defs/SafeContractPoint"
+            "$ref": "#/$defs/SafeContractCurve"
           },
           "type": "array"
-        },
-        "baseline_critical_ran_out": {
-          "description": "`critical_ran_out` with no utility contract: what the rule compares against.",
-          "minimum": 0,
-          "type": "number"
-        },
-        "safe": {
-          "anyOf": [
-            {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The largest contract with `storm_kept` >= 0.95 (or no storm calls) and no more\ncritical homes running out than with no contract; null if none qualifies."
         }
       },
       "required": [
         "params",
         "seeds",
-        "curve",
-        "baseline_critical_ran_out",
-        "safe"
+        "scenarios"
       ],
       "type": "object"
     },

@@ -40,6 +40,9 @@ class FleetView:
     """What the fleet owes the utility this tick; None when no commitment source is configured."""
     forecast_min_f: Callable[[float], float]
     """Coldest forecast temperature over the next `hours` (this tick included), °F."""
+    domain: np.ndarray | None = None
+    """Failure domain per home, as the operator knows it: the utility's rotating-outage block (the
+    never-restored feeders are one more). None when unknown."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +61,11 @@ class Decisions:
     """Each home's share of the utility call, kW, included in `kw`: what failover covers if the
     home drops out. None when the policy doesn't split calls (no failover)."""
     refill_kwh: np.ndarray | None = None
-    """Energy each home charges back up to whatever the price (its reserve; the contract policy
-    adds call-ready outside calls): charging below it is backup cost. None: no such level."""
+    """Energy each home charges back up to whatever the price for its reserve: charging below it is
+    backup cost. None: no such level."""
+    call_ready_kwh: np.ndarray | None = None
+    """Energy each home charges up to whatever the price to be ready for the next call, at least
+    `refill_kwh`: charging between the two is a contract cost. None: no such level."""
 
 
 class Policy(Protocol):
@@ -110,14 +116,18 @@ class ContractPolicy:
        fleet's reserve floor, whichever is higher. A home with a known device fault exports nothing.
     3. Utility call: split the promised MW across on-grid homes pro rata to energy above their
        floor, none above max kW or what it holds this tick (the excess goes to the others).
+       `spread_by_domain`: first evenly across the failure domains with such a home, then pro rata
+       inside each (`by_domain`).
     4. Buffer: a home with a call share keeps `buffer_frac` x its share spare, in power and in
        energy for the rest of the call. Fleet buffer = `buffer_frac` x promised MW.
+       `spread_by_domain`: N-1 instead (`n_minus_1`), the largest domain's share held by the others.
     5. Call-ready: every on-grid home keeps the next call's energy above its floor: its share
-       of the contract x `max_call_ticks` x (1 + `buffer_frac`). The share is planned pro rata to
-       room above the floor (capacity - floor), not current charge, so an empty home still gets
-       one. Outside a call, a home below that level charges up to it whatever the price: keeping
-       the promise avoids a penalty at the same price. (Not during a call, where charging would
-       only net against the fleet's own delivery; there only the reserve is recovered.)
+       of the contract x `max_call_ticks` x (1 + buffer). The share is planned like a call's (3),
+       weighted by room above the floor (capacity - floor), not current charge, so an empty home
+       still gets one. Outside a call, a home below that level charges up to it whatever the
+       price: keeping the promise avoids a penalty at the same price. The sim books it as a
+       contract cost (`Decisions.call_ready_kwh`). (Not during a call, where charging would only
+       net against the fleet's own delivery; there only the reserve is recovered.)
     6. Headroom, what's left after 2-5: `headroom_mode` "keep" never exports it; "sell" exports it
        (during a call, on top of the rest of it) if the price is at least `export_at_usd`. Either
        way, charge if the price is at most `charge_at_usd`.
@@ -137,6 +147,9 @@ class ContractPolicy:
     """...and charge while the price is at most this, $/MWh..."""
     precharge_soc: float = 0.95
     """...up to this SoC."""
+    spread_by_domain: bool = False
+    """Split calls across failure domains (`FleetView.domain`, required then) and hold an N-1
+    buffer: rules 3-5. ⚠ Assumes the operator knows the utility's rotation blocks."""
 
     def decide(self, frame: Frame, fleet: FleetView) -> Decisions:
         n, h = len(fleet.soc), HOURS_PER_TICK
@@ -151,12 +164,12 @@ class ContractPolicy:
         c = fleet.commitment
         if c is not None:
             room = np.where(can_export, np.maximum(cap - floor, 0.0), 0.0)
-            next_share = pro_rata(c.contract_mw * 1000, weight=room, cap=np.full(n, fleet.max_kw))
-            ready_kwh = np.minimum((1 + c.buffer_frac) * next_share * c.max_call_ticks * h, room)
+            next_share, next_buffer = self.split(c.contract_mw * 1000, room, np.full(n, fleet.max_kw), fleet, c)
+            ready_kwh = np.minimum((1 + next_buffer) * next_share * c.max_call_ticks * h, room)
         held_kwh = ready_kwh
         if c is not None and c.call:
-            share = pro_rata(c.promised_mw * 1000, weight=above, cap=np.minimum(fleet.max_kw, above / h))
-            held_kw = (1 + c.buffer_frac) * share
+            share, buffer = self.split(c.promised_mw * 1000, above, np.minimum(fleet.max_kw, above / h), fleet, c)
+            held_kw = (1 + buffer) * share
             held_kwh = ready_kwh + held_kw * c.ticks_left * h
         headroom_kw = np.clip(np.minimum(fleet.max_kw - held_kw, (above - held_kwh) / h), 0.0, None)
         sell = self.headroom_mode == "sell" and frame.price >= self.export_at_usd
@@ -185,8 +198,46 @@ class ContractPolicy:
             conf=np.full(n, np.nan),
             kw=kw,
             call_kw=call_kw,
-            refill_kwh=np.where(fleet.grid, target, 0.0),
+            refill_kwh=np.where(fleet.grid, floor, 0.0),
+            call_ready_kwh=np.where(fleet.grid, target, 0.0),
         )
+
+    def split(
+        self, total_kw: float, weight: np.ndarray, cap: np.ndarray, fleet: FleetView, c: Commitment
+    ) -> tuple[np.ndarray, float]:
+        """Each home's share of `total_kw` (rule 3) and the buffer to hold on top, as a fraction of it (rule 4)."""
+        if not self.spread_by_domain:
+            return pro_rata(total_kw, weight, cap), c.buffer_frac
+        if fleet.domain is None:
+            raise ValueError("spread_by_domain needs each home's failure domain (FleetView.domain)")
+        share, per_domain = by_domain(total_kw, weight, cap, fleet.domain)
+        return share, n_minus_1(per_domain, fallback=c.buffer_frac)
+
+
+def by_domain(
+    total: float, weight: np.ndarray, cap: np.ndarray, domain: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split `total` evenly across the domains that have a home with weight, no domain above what
+    its homes can take (the excess goes to the others), then `pro_rata` inside each domain.
+    Returns the per-home shares and the per-domain totals."""
+    _, d = np.unique(domain, return_inverse=True)
+    live = np.bincount(d, weights=(weight > 0).astype(float)) > 0
+    per_domain = pro_rata(total, weight=live.astype(float), cap=np.bincount(d, weights=np.where(weight > 0, cap, 0.0)))
+    share = np.zeros(len(weight))
+    for k in np.flatnonzero(per_domain > 0):
+        home = d == k
+        share[home] = pro_rata(per_domain[k], weight[home], cap[home])
+    return share, per_domain
+
+
+def n_minus_1(per_domain: np.ndarray, fallback: float) -> float:
+    """Buffer fraction such that losing the domain with the largest share leaves exactly that
+    share spare on the others: largest / (total - largest). 3 even domains: 1/2; 5: 1/4. With
+    fewer than two domains no other domain can cover the loss, so `fallback`."""
+    if (per_domain > 0).sum() < 2:
+        return fallback
+    largest = float(per_domain.max())
+    return largest / (float(per_domain.sum()) - largest)
 
 
 def pro_rata(total: float, weight: np.ndarray, cap: np.ndarray) -> np.ndarray:

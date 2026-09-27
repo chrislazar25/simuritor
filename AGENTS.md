@@ -8,8 +8,10 @@ Run from the repo root.
 uv run pytest                               # all tests
 uv run python -m scripts.gen_types          # regenerate schema JSON + frontend/src/types.ts
 uv run python -m scripts.gen_types --check  # fail if generated files are stale
-uv run scripts/fetch_prices.py              # rebuild data/ercot_rtm_spp_uri_2021-02.parquet from ERCOT
-uv run python -m scripts.run_replay          # full Uri replay headless, daily summary
+uv run scripts/fetch_prices.py [uri|normal]  # rebuild the RT price files in data/ from ERCOT
+uv run scripts/fetch_temps.py [uri|normal]   # rebuild the hourly Austin temperature files (Open-Meteo)
+uv run scripts/fetch_homes.py                # rebuild data/austin_homes.parquet (OSM residential sites, one Overpass query)
+uv run python -m scripts.run_replay          # full replay headless (--scenario uri|normal), daily summary
 uv run python -m scripts.sweep               # insight sweep -> results/sweep.csv, prints the pivot
 uv run python -m scripts.plots               # README charts from results/sweep.csv -> docs/img/
 uv run uvicorn backend.app:app --reload --port 8000   # backend (health + /ws)
@@ -27,8 +29,8 @@ cd frontend && npm run build && npm run lint          # type-check + build, lint
 ## Design
 Swappable pieces, each behind a small interface the sim core depends on:
 - **Policy**: decides each home's action per tick (`ContractPolicy`, docs/dispatch-design.md; `NaivePolicy` as the baseline).
-- **Data source**: price, temperature and grid-event timeline per tick (Uri parquet files tonight; other crises or live data later).
-- **Faults / chaos**: things that happen to homes or infrastructure (rolling outages plus a never-restored share, and silent device faults; telemetry and model failures later). Failover (`backend/failover.py`) covers homes that drop out of a call, on a timeline in seconds inside each tick.
+- **Data source**: price, temperature and grid-event timeline per tick (parquet files for two scenarios: Uri, and a normal winter week; other crises or live data later).
+- **Faults / chaos**: things that happen to homes or infrastructure (in Uri, rolling outages by feeder plus never-restored feeders; silent device faults everywhere; telemetry and model failures later). Failover (`backend/failover.py`) covers homes that drop out of a call, on a timeline in seconds inside each tick.
 - **Commitment source**: the MW promised to the utility (`UtilityContract`: 0 outside calls; `promised_mw` is null only with no contract).
 
 Keep it lean: one interface per piece, one or two implementations. Add an abstraction only when a second use is in sight.

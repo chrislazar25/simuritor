@@ -53,11 +53,18 @@ export interface ReplayParams {
    * `sell`: export it when the price spikes.
    */
   headroom_mode: "keep" | "sell";
+  /**
+   * Fleet size. 3,000 homes x 12 kW is 36 MW of nameplate, about Base's 40 MW Austin Energy deal.
+   */
   homes: number;
   /**
-   * The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021.
+   * Contract policy only. Treat each rotating-outage block as a failure domain (⚠ assumes the
+   * operator knows the utility's blocks): split a call evenly across the on-grid domains, then pro
+   * rata inside one, and hold an N-1 buffer (losing the largest domain's share leaves that much
+   * spare on the others) instead of the fixed 20%.
    */
-  scenario: "uri";
+  spread_by_domain: boolean;
+  scenario: "uri" | "normal";
   /**
    * Utility contract size, share of fleet nameplate (homes x max kW).
    */
@@ -171,12 +178,13 @@ export interface FleetStats {
   revenue_usd: number;
   /**
    * Cumulative utility contract P&L: capacity payments + call energy (delivery up to the promise,
-   * at the interval price) - shortfall penalties.
+   * at the interval price) - shortfall penalties - the cost of charging homes call-ready for the
+   * next call outside calls (it exists for the contract).
    */
   contract_pnl_usd: number;
   /**
-   * Cumulative cost of charging homes back up to their reserve (and, outside calls, call-ready
-   * for the next one), whatever the price. Negative if that charging ran at negative prices.
+   * Cumulative cost of charging homes back up to their reserve, whatever the price. Negative if
+   * that charging ran at negative prices.
    */
   backup_cost_usd: number;
   /**
@@ -251,32 +259,24 @@ export interface ResetMessage {
   type: "reset";
 }
 /**
- * The largest contract the fleet can promise and keep through the storm.
+ * The largest contract the fleet can promise and keep, in a crisis and in a normal week.
  */
 export interface SafeContractResponse {
-  params: ScenarioParams;
+  params: SweepParams;
   /**
    * Every point is the mean over these replays.
    */
   seeds: number[];
   /**
-   * Ascending by contract size.
+   * One per scenario: `uri`, then `normal`.
    */
-  curve: SafeContractPoint[];
-  /**
-   * `critical_ran_out` with no utility contract: what the rule compares against.
-   */
-  baseline_critical_ran_out: number;
-  /**
-   * The largest contract with `storm_kept` >= 0.95 (or no storm calls) and no more
-   * critical homes running out than with no contract; null if none qualifies.
-   */
-  safe: number | null;
+  scenarios: SafeContractCurve[];
 }
 /**
- * Every replay knob except the contract size: what GET /api/safe-contract sweeps the contract over.
+ * Every replay knob except the scenario and the contract size: GET /api/safe-contract's query
+ * (it sweeps the contract size, in every scenario).
  */
-export interface ScenarioParams {
+export interface SweepParams {
   /**
    * `contract`: keeps both contracts (docs/dispatch-design.md); `naive`: the price-rule baseline.
    */
@@ -306,14 +306,39 @@ export interface ScenarioParams {
    * `sell`: export it when the price spikes.
    */
   headroom_mode: "keep" | "sell";
+  /**
+   * Fleet size. 3,000 homes x 12 kW is 36 MW of nameplate, about Base's 40 MW Austin Energy deal.
+   */
   homes: number;
   /**
-   * The crisis replayed: Winter Storm Uri, Austin, Feb 10-20 2021.
+   * Contract policy only. Treat each rotating-outage block as a failure domain (⚠ assumes the
+   * operator knows the utility's blocks): split a call evenly across the on-grid domains, then pro
+   * rata inside one, and hold an N-1 buffer (losing the largest domain's share leaves that much
+   * spare on the others) instead of the fixed 20%.
    */
-  scenario: "uri";
+  spread_by_domain: boolean;
 }
 /**
- * One contract size, averaged over the seeds.
+ * Contract size against promise kept and money in one scenario, and the largest safe size.
+ */
+export interface SafeContractCurve {
+  scenario: "uri" | "normal";
+  /**
+   * Ascending by contract size.
+   */
+  curve: SafeContractPoint[];
+  /**
+   * `critical_ran_out` with no utility contract: what the rule compares against.
+   */
+  baseline_critical_ran_out: number;
+  /**
+   * The largest contract with `kept` >= 0.95 (or no calls) and no more critical homes running
+   * out than with no contract; null if none qualifies.
+   */
+  safe: number | null;
+}
+/**
+ * One contract size in one scenario, averaged over the seeds.
  */
 export interface SafeContractPoint {
   /**
@@ -321,11 +346,12 @@ export interface SafeContractPoint {
    */
   contract: number;
   /**
-   * Share of called intervals kept in the storm (Feb 14-18); null if the storm had no calls.
+   * Share of called intervals kept in the scenario's test window (`uri`: the storm, Feb 14-18;
+   * `normal`: the whole week); null if the window had no calls.
    */
-  storm_kept: number | null;
+  kept: number | null;
   /**
-   * The same before the storm (Feb 10-12).
+   * `uri` only: the same before the storm (Feb 10-12). Null for `normal`, or with no calls.
    */
   pre_kept: number | null;
   /**

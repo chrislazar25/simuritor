@@ -21,6 +21,7 @@ from backend.schema import (
     ResetMessage,
     SafeContractResponse,
     SpeedMessage,
+    SweepParams,
     TickMessage,
     server_message,
 )
@@ -47,7 +48,7 @@ def test_ws_play_streams_ticks_and_reset_resends_init(client: TestClient) -> Non
     with client.websocket_connect("/ws") as ws:
         init = receive(ws)
         assert isinstance(init, InitMessage)
-        assert init.n_ticks == 960 and len(init.homes) == 500
+        assert init.n_ticks == 960 and len(init.homes) == 3000
         assert init.params == ReplayParams()
 
         ws.send_text(SpeedMessage(ticks_per_sec=64).model_dump_json())
@@ -77,6 +78,14 @@ def test_ws_query_params_set_the_replay_and_init_echoes_them(client: TestClient)
         assert len(init.homes) == 40
 
 
+def test_ws_scenario_normal_replays_the_normal_week(client: TestClient) -> None:
+    with client.websocket_connect("/ws?scenario=normal&homes=20") as ws:
+        init = receive(ws)
+        assert isinstance(init, InitMessage)
+        assert init.params.scenario == "normal"
+        assert init.start == datetime(2022, 2, 21, tzinfo=TZ) and init.n_ticks == 7 * 96
+
+
 @pytest.mark.parametrize(
     ("query", "reason"),
     [
@@ -84,6 +93,7 @@ def test_ws_query_params_set_the_replay_and_init_echoes_them(client: TestClient)
         ("homes=0", "homes: Input should be greater than or equal to 1"),
         ("policy=greedy", "policy: Input should be 'contract' or 'naive'"),
         ("colour=red", "colour: Extra inputs are not permitted"),
+        ("scenario=katrina", "scenario: Input should be 'uri' or 'normal'"),
         ("fault_rate=abc&homes=0", "fault_rate: Input should be a valid number"),
     ],
 )
@@ -99,7 +109,8 @@ def test_ws_bad_params_close_the_socket_with_a_reason(client: TestClient, query:
 
 def short_sim(params: ReplayParams) -> Sim:
     start = datetime(2021, 2, 15, tzinfo=TZ)
-    return build_sim(params, params.contract, frames=UriParquetSource().frames(start, start + 4 * TICK))
+    frames = UriParquetSource().frames(start, start + 4 * TICK)
+    return build_sim(params, params.scenario, params.contract, frames=frames)
 
 
 async def next_message(queue: asyncio.Queue, timeout: float = 1.0) -> InitMessage | TickMessage:
@@ -169,24 +180,48 @@ def test_session_pause_stops_ticks() -> None:
 # --- GET /api/safe-contract ---------------------------------------------------
 
 
-def test_safe_contract_curve_is_cached_by_params(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A small fleet so the 39 replays run fast; the lifespan shuts the worker pool down."""
+def test_safe_contract_curve_is_warmed_at_startup_and_cached_by_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A small fleet so the 78 replays run fast; the lifespan starts it and shuts the worker pool down."""
     monkeypatch.setattr(app_module, "safe_contract_cache", type(app_module.safe_contract_cache)())
+    monkeypatch.setattr(app_module, "WARM_SAFE_CONTRACT", (SweepParams(homes=20, max_calls_per_day=2),))
     with TestClient(app) as client:
+        assert list(app_module.safe_contract_cache) == [SweepParams(homes=20, max_calls_per_day=2)]
         response = client.get("/api/safe-contract?homes=20&max_calls_per_day=2")
         assert response.status_code == 200
         body = SafeContractResponse.model_validate(response.json())
         assert body.params.homes == 20 and body.params.max_calls_per_day == 2
         assert body.seeds == list(SEEDS)
-        assert [p.contract for p in body.curve] == list(CONTRACTS)
-        assert body.safe is None or body.safe in CONTRACTS
-        assert all(p.storm_kept is not None and p.pre_kept is not None for p in body.curve)
+        assert [c.scenario for c in body.scenarios] == ["uri", "normal"]
+        for curve in body.scenarios:
+            assert [p.contract for p in curve.curve] == list(CONTRACTS)
+            assert curve.safe is None or curve.safe in CONTRACTS
+            assert all(p.kept is not None for p in curve.curve)
+        uri, normal = body.scenarios
+        assert all(p.pre_kept is not None for p in uri.curve) and all(p.pre_kept is None for p in normal.curve)
 
         again = client.get("/api/safe-contract?max_calls_per_day=2&homes=20")
         assert again.json() == response.json()
         assert len(app_module.safe_contract_cache) == 1
 
 
-@pytest.mark.parametrize("query", ["contract=0.3", "homes=0", "headroom_mode=hoard"])
+def test_a_failed_safe_contract_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    async def flaky(params: SweepParams, pool: object) -> SafeContractResponse:
+        calls.append(params)
+        if len(calls) == 1:
+            raise RuntimeError("worker died")
+        return SafeContractResponse(params=params, seeds=list(SEEDS), scenarios=[])
+
+    monkeypatch.setattr(app_module, "safe_contract_cache", type(app_module.safe_contract_cache)())
+    monkeypatch.setattr(app_module, "safe_contract", flaky)
+    client = TestClient(app, raise_server_exceptions=False)
+    assert client.get("/api/safe-contract?homes=7").status_code == 500
+    assert client.get("/api/safe-contract?homes=7").status_code == 200
+    assert client.get("/api/safe-contract?homes=7").status_code == 200
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("query", ["contract=0.3", "scenario=uri", "homes=0", "headroom_mode=hoard"])
 def test_safe_contract_rejects_bad_params(client: TestClient, query: str) -> None:
     assert client.get(f"/api/safe-contract?{query}").status_code == 422
