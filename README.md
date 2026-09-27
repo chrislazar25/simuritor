@@ -6,9 +6,9 @@ Built in 36 hours for the Base Power × AITX hackathon (tracks: **Orchestration*
 
 > **How much can a Base-sized fleet safely promise a utility if Winter Storm Uri happens again?**
 >
-> - In a normal winter week, **60%** of its power keeps every call.
-> - In Uri, only **15%** does.
-> - The safe promise shrinks **4×**, and it's *energy*, not failover speed, that runs out.
+> - In a normal winter week, every size we tested up to **60%** of its power keeps its calls.
+> - In Uri, only **15%** clears the bar (95.6% of storm calls kept; the bar is 95%).
+> - The safe promise shrinks **4×**, and it's *energy*, not failover speed, that runs out: every failover is covered and calls still miss.
 
 ![Promise kept vs contract size: normal winter week, Uri pre-storm and storm](docs/img/safe-contract.png)
 
@@ -44,10 +44,10 @@ A deterministic dispatch policy keeps both promises. Failover runs on a **second
 | 30% | 100% | 61.1% |
 | 60% | 100% | 23.3% |
 
-The "Find safe contract" rule is the largest size keeping ≥ 95%. By that rule: **15% in Uri, 60% in the normal week.** The normal week (Feb 21–27, 2022) and Uri's pre-storm days each contain a single call, so read "100%" there as comfortable, not proven.
+The "Find safe contract" rule is the largest size keeping ≥ 95%. By that rule: **15% in Uri (95.6% kept), 60% in the normal week** (the largest size tested, so a floor, not a ceiling). Sizes step by 5%. The normal week (Feb 21–27, 2022) and Uri's pre-storm days each contain a single call, so read "100%" there as comfortable, not proven.
 
 **2. Energy runs out before failover does.**
-- Failover holds: at 10%, **1,344 failovers** in the replay, **0 uncovered**, covered in **5 s** (warned) / **11 s** (silent) against a 60 s target.
+- Failover holds: at 10%, **1,344 failovers** in the replay, **0 uncovered**, covered in **5 s** (warned) / **11 s** (silent) against a 60 s target. Those times come from the modelled heartbeat and reassign delays, not measured device latency.
 - At 20% there are still **no uncovered failovers**, yet 11% of storm calls miss. The fleet simply doesn't have the energy.
 - The backup reserve grows as it gets colder, calls come at the same time, and both draw on the same kWh. Correlated neighbourhood cuts (a rotation block is ~540 homes) only beat failover from 30% up.
 
@@ -91,6 +91,8 @@ A 4 h reserve moves Uri's safe contract from 15% to **25%**. Every hour of backu
   - What it does show: at Uri prices, **keeping homeowners' backup and staying ready for the next call both mean buying energy at ~$9,000/MWh**, far more than any capacity fee.
   - The policy also buys the next call's energy too early: right after the day's call, although no call can come until tomorrow. That's the next fix.
 - **Some medical homes always run out (26–37 of 300).** They sit on feeders that were never restored for ~4 days, and no 16 h reserve lasts that long. That's a sizing limit, not a dispatch one.
+- **The controller knows a bit too much:** planning uses the actual temperatures as a perfect forecast, and failover won't pick a stand-in home that drops out later in the same 15 minutes. Forecast error and cascading stand-in failures are next.
+- **Evidence:** three fleet seeds against one historical crisis. The "safe contract" is the largest size that clears our bar in this model, not a guarantee for a real fleet.
 - **The outage model:** feeders are a k-means stand-in for the real distribution network, and the outage schedule (4 h off / 6 h on, 10% never restored) is our assumption.
 
 ## How it works
@@ -175,7 +177,7 @@ Base's fleet data is private. Each assumption is listed with its basis, or marke
 - **Counterfactual:** neither Base nor ADER existed in 2021, so this is a what-if replay.
 
 ## Run it
-Requires [`uv`](https://docs.astral.sh/uv/) and Node.
+Requires [`uv`](https://docs.astral.sh/uv/) and Node. No API keys or `.env` needed; all data ships in `data/` (the basemap needs internet). The app needs the backend running; there's no static deploy.
 
 ```bash
 uv sync
@@ -185,7 +187,7 @@ cd frontend && npm install && npm run dev          # http://localhost:5173
 
 The replay runs with the terms in the URL, e.g. `/?policy=naive&contract=0.1`. The Contract terms panel writes them for you.
 
-<!-- TODO: in-app controls (play/pause/speed/reset, H hides panels) -->
+In the app: **Play / Pause**, speed (1–32 ticks/s), **Reset**, and **Hide panels** (or **H**) for a bare map. Panels drag, resize and expand. Change terms in **Contract terms**, then **Find safe contract** to compare every size against Uri and a normal week.
 
 Headless:
 ```bash

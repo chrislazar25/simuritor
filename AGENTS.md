@@ -46,5 +46,4 @@ Keep it lean: one interface per piece, one or two implementations. Add an abstra
 - `docs/dispatch-design.md`: the current design (contracts, ContractPolicy, failover, the insight experiment, assumptions).
 - `docs/design.md`: look and feel, home visual states, theming seams.
 - `docs/notes.md`: open questions, data findings, results, deferred ideas.
-- `docs/hackathon-guide.md`: how it's judged.
-- `.claude/skills/`: playbooks (FastAPI, React, Vite, dashboards, testing) any agent may read.
+- `.claude/skills/`: playbooks (FastAPI, React, Vite, UI polish, demo video, verification) any agent may read.

@@ -30,8 +30,8 @@ function verdict(r: SafeContractResponse): string {
     return `Even ${formatPct(smallest)} is too much: no contract size keeps ${formatPct(SAFE_KEPT)} of its storm calls through Uri.${normalNote}`
   }
   const size = `${formatPower((uri.safe * r.params.homes * HOME_MAX_KW) / 1000)} (${formatPct(uri.safe)} of this fleet)`
-  if (uri.safe === largest) return `Sign up to ${size}, the largest size tried; Uri kept its promises all the way.${normalNote}`
-  return `Sign up to ${size}; above that, Uri breaks promises.${normalNote}`
+  if (uri.safe === largest) return `Up to ${size}, the largest size tried, keeps at least ${formatPct(SAFE_KEPT)} of storm calls through Uri.${normalNote}`
+  return `Largest size that keeps at least ${formatPct(SAFE_KEPT)} of storm calls through Uri: ${size}. Above that, promises break.${normalNote}`
 }
 
 /** Uri storm promise kept against contract size, the 95% bar, the safe point, and the normal week when it had calls. */
