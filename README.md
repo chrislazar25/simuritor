@@ -123,7 +123,7 @@ A 4 h reserve moves Uri's safe contract from 15% to **25%**. Every hour of backu
   4. hold a buffer for failover;
   5. stay ready for the next call;
   6. keep the rest (headroom).
-- **Why no LLM:** we started with a model in the loop for "judgment calls" and dropped it. Dispatch works as deterministic rules; the hard part is keeping promises when hardware fails. (The old plan is in [`docs/archive/`](docs/archive/pitch-points-jev.md).)
+- **Why no LLM:** we started with a model in the loop for "judgment calls" and dropped it. Dispatch works as deterministic rules; the hard part is keeping promises when hardware fails.
 
 **Performance:**
 

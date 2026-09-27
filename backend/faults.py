@@ -15,7 +15,7 @@ import numpy as np
 from backend.data import HOURS_PER_TICK, TICK, TZ
 
 OUTAGE_START = datetime(2021, 2, 15, 2, 0, tzinfo=TZ)
-"""⚠ Matches the ~10 GW ERCOT load drop 1-2am Feb 15 (docs/slice-spec.md)."""
+"""⚠ Matches the ~10 GW ERCOT load drop 1-2am Feb 15 (see docs/dispatch-design.md)."""
 OUTAGE_END = datetime(2021, 2, 18, 12, 0, tzinfo=TZ)
 """Exclusive. ⚠ Assumption, to verify."""
 

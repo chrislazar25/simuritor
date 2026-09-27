@@ -31,7 +31,7 @@ SLACK_MW = 1e-9
 
 @dataclass(frozen=True)
 class FleetConfig:
-    """Spec defaults (docs/slice-spec.md); ⚠ marks assumptions to state in the README."""
+    """Simulation defaults; ⚠ marks assumptions to state in the README."""
 
     n_homes: int = 500
     homes_file: Path | None = DATA_DIR / "austin_homes.parquet"

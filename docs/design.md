@@ -58,7 +58,7 @@ Both share the same structure (an isometric scene of homes whose state is visibl
 Both sites are references, not sources: we don't use their images, fonts or logos, and Simuritor never presents itself as a Base product.
 
 ## Memorable detail
-**The city dims, the fleet stays lit.** When outages hit Feb 15, homes lose the grid but keep their lights on from the battery, until some don't. The one state we design hardest for is **dark**: a home, possibly a medical-device home, with no power at all. This is already the pitch's map idea (`docs/pitch-points.md`).
+**The city dims, the fleet stays lit.** When outages hit Feb 15, homes lose the grid but keep their lights on from the battery, until some don't. The one state we design hardest for is **dark**: a home, possibly a medical-device home, with no power at all.
 
 ## Home visual states (the core seam)
 One function maps wire data to a visual state; every renderer and theme consumes only this.
@@ -70,7 +70,7 @@ One function maps wire data to a visual state; every renderer and theme consumes
 | `backup` | not `grid`, `soc > 0` | Grid down, battery powering the house | amber | wires cut, battery glows, windows lit | lit sprite, pole broken |
 | `dark` | not `grid`, `soc == 0` | Lights out | dim grey, hollow | windows dark, no glow | unlit sprite |
 
-- Matches the spec's dot colours (`docs/slice-spec.md`). `charge` may get its own treatment later.
+- Matches the current dot colours. `charge` may get its own treatment later.
 - Colour is never the only signal: `dark` is also hollow and dim, so it reads for colour-blind viewers and on a grayscale screenshot.
 - Household type (medical, elderly, wfh) is an **overlay**, not a state (e.g. a ring or badge), added when we decide how to highlight at-risk homes.
 

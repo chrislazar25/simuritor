@@ -44,8 +44,7 @@ Keep it lean: one interface per piece, one or two implementations. Add an abstra
 
 ## Where things live
 - `docs/dispatch-design.md`: the current design (contracts, ContractPolicy, failover, the insight experiment, assumptions).
-- `docs/slice-spec.md`: Friday's build spec (historical), defaults, repo layout.
 - `docs/design.md`: look and feel, home visual states, theming seams.
 - `docs/notes.md`: open questions, data findings, results, deferred ideas.
-- `docs/hackathon-guide.md`: how it's judged. `docs/archive/`: dropped plans.
+- `docs/hackathon-guide.md`: how it's judged.
 - `.claude/skills/`: playbooks (FastAPI, React, Vite, dashboards, testing) any agent may read.

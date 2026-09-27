@@ -74,7 +74,7 @@ class Policy(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class NaivePolicy:
-    """Price rules (docs/slice-spec.md): sell high, buy low, otherwise hold.
+    """Price rules: sell high, buy low, otherwise hold.
 
     Plus one recovery rule: a home on grid below the reserve floor charges whatever the
     price, so a home that came back from an outage refills its backup. It only refills to
