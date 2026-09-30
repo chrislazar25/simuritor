@@ -8,6 +8,7 @@ import { FloatingPanel } from './FloatingPanel.tsx'
 import { formatClock, formatPrice } from './format.ts'
 import { FleetMap } from './Map.tsx'
 import { ReplayOverview } from './ReplayOverview.tsx'
+import { STATIC } from './static/workers.ts'
 import { replayQuery, type Terms } from './terms.ts'
 import { useTicks } from './useTicks.ts'
 
@@ -104,7 +105,9 @@ export default function App() {
             : status === 'open'
               ? 'Connected'
               : status === 'connecting'
-                ? 'Connecting…'
+                ? STATIC
+                  ? 'Loading simulator…'
+                  : 'Connecting…'
                 : 'Reconnecting…'}
         </span>
       </header>

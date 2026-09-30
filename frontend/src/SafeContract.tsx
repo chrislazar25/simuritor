@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { STATIC, staticSafeContract } from './static/workers.ts'
 import {
   CartesianGrid,
   Legend,
@@ -156,6 +157,10 @@ export function SafeContract({ terms, onReplay }: { terms: Terms; onReplay: (ter
     inFlight.current = controller
     setPending(query)
     try {
+      if (STATIC) {
+        setResult({ query, response: await staticSafeContract(query, controller.signal) })
+        return
+      }
       const res = await fetch(`/api/safe-contract?${query}`, { signal: controller.signal })
       if (!res.ok) throw new Error(`the backend answered ${res.status}`)
       setResult({ query, response: (await res.json()) as SafeContractResponse })
@@ -194,7 +199,9 @@ export function SafeContract({ terms, onReplay }: { terms: Terms; onReplay: (ter
       </button>
       <p className="terms-note">
         {busy
-          ? 'Running 78 replays. New terms can take about 15 seconds.'
+          ? STATIC
+            ? 'Running 78 replays in your browser. New terms take about a minute.'
+            : 'Running 78 replays. New terms can take about 15 seconds.'
           : 'Compare Uri and a normal week · 5–60% of fleet power.'}
       </p>
       <div aria-live="polite">

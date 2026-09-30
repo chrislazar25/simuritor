@@ -3,3 +3,9 @@
 __pycache__/
 node_modules/
 frontend/dist/
+frontend/public/py/
+
+# Local config and off-the-record notes
+.env.*
+private/
+.openai/

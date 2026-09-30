@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { STATIC, WorkerSocket } from './static/workers.ts'
 import type { ClientMessage, FailoverEvent, InitMessage, ServerMessage, TickMessage } from './types.ts'
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
@@ -47,7 +48,7 @@ export function useTicks(path = '/ws') {
   const [history, setHistory] = useState<TickPoint[]>([])
   const [failovers, setFailovers] = useState<LoggedFailover[]>([])
   const [playing, setPlaying] = useState(false)
-  const socket = useRef<WebSocket | null>(null)
+  const socket = useRef<WebSocket | WorkerSocket | null>(null)
 
   useEffect(() => {
     let disposed = false
@@ -86,7 +87,8 @@ export function useTicks(path = '/ws') {
 
     function connect() {
       setStatus('connecting')
-      const ws = new WebSocket(socketUrl(path))
+      // The static build has no server: the same backend runs in a worker (src/static/).
+      const ws = STATIC ? new WorkerSocket(path) : new WebSocket(socketUrl(path))
       socket.current = ws
 
       ws.onopen = () => {
@@ -125,7 +127,7 @@ export function useTicks(path = '/ws') {
             break
         }
       }
-      ws.onclose = (event) => {
+      ws.onclose = (event: { code: number; reason: string }) => {
         if (socket.current === ws) socket.current = null
         if (disposed) return
         setStatus('closed')
