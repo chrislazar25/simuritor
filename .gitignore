@@ -3,3 +3,10 @@
 __pycache__/
 node_modules/
 frontend/dist/
+
+# Local config and off-the-record notes
+.env.*
+private/
+.openai/
+# Recorded replays: regenerate with `uv run python -m scripts.record_demo`
+frontend/public/replays/

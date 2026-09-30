@@ -1,3 +1,4 @@
+import { RECORDED } from './recordedReplay.ts'
 import { formatPct, formatPower } from './format.ts'
 import type { InitMessage, TickMessage } from './types.ts'
 import type { ConnectionStatus } from './useTicks.ts'
@@ -49,13 +50,13 @@ export function ReplayOverview({
         {rejected
           ? 'Choose Back to defaults in Contract terms to start a valid replay.'
           : status !== 'open'
-            ? 'The replay server is unavailable. Reconnecting automatically.'
+            ? RECORDED ? 'Loading the recording. This may take a moment.' : 'The replay server is unavailable. Reconnecting automatically.'
             : complete
               ? 'Change the contract terms to compare another run.'
               : !init
                 ? 'Preparing the fleet and historical scenario.'
                 : !tick
-                  ? 'Press Play to watch the replay. Evaluate contract terms to compare both weeks.'
+                  ? RECORDED ? 'Press Play. Choose a recorded run to compare the storm and a normal week.' : 'Press Play to watch the replay. Evaluate contract terms to compare both weeks.'
                   : fleet?.utility_call
                     ? 'Utility call active. Watch delivered power against the promise.'
                     : fleet && fleet.homes_on_grid < (init?.homes.length ?? 0)

@@ -9,6 +9,8 @@ import { formatClock, formatPrice } from './format.ts'
 import { FleetMap } from './Map.tsx'
 import { ReplayOverview } from './ReplayOverview.tsx'
 import { replayQuery, type Terms } from './terms.ts'
+import { RECORDED } from './recordedReplay.ts'
+import { RecordedTerms } from './RecordedTerms.tsx'
 import { useTicks } from './useTicks.ts'
 
 const HIDDEN_KEY = 'simuritor.panels-hidden'
@@ -102,7 +104,7 @@ export default function App() {
           {rejected
             ? 'Invalid terms'
             : status === 'open'
-              ? 'Connected'
+              ? RECORDED ? 'Recorded demo' : 'Connected'
               : status === 'connecting'
                 ? 'Connecting…'
                 : 'Reconnecting…'}
@@ -131,7 +133,7 @@ export default function App() {
             }}
             summary={<TermsSummary init={init} />}
           >
-            <ContractTerms init={init} rejected={rejected} onReplay={replay} />
+            {RECORDED ? <RecordedTerms init={init} rejected={rejected} onReplay={replay} /> : <ContractTerms init={init} rejected={rejected} onReplay={replay} />}
           </FloatingPanel>
           <FloatingPanel
             title="Failovers"

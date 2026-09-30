@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { RECORDED, RecordedReplay } from './recordedReplay.ts'
 import type { ClientMessage, FailoverEvent, InitMessage, ServerMessage, TickMessage } from './types.ts'
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed'
@@ -47,7 +48,7 @@ export function useTicks(path = '/ws') {
   const [history, setHistory] = useState<TickPoint[]>([])
   const [failovers, setFailovers] = useState<LoggedFailover[]>([])
   const [playing, setPlaying] = useState(false)
-  const socket = useRef<WebSocket | null>(null)
+  const socket = useRef<WebSocket | RecordedReplay | null>(null)
 
   useEffect(() => {
     let disposed = false
@@ -86,14 +87,14 @@ export function useTicks(path = '/ws') {
 
     function connect() {
       setStatus('connecting')
-      const ws = new WebSocket(socketUrl(path))
+      const ws = RECORDED ? new RecordedReplay(path) : new WebSocket(socketUrl(path))
       socket.current = ws
 
       ws.onopen = () => {
         retryMs = RETRY_MIN_MS
         setStatus('open')
       }
-      ws.onmessage = (event: MessageEvent<string>) => {
+      ws.onmessage = (event: { data: string }) => {
         if (disposed) return
         const msg = JSON.parse(event.data) as ServerMessage
         switch (msg.type) {
@@ -125,7 +126,7 @@ export function useTicks(path = '/ws') {
             break
         }
       }
-      ws.onclose = (event) => {
+      ws.onclose = (event: { code: number; reason: string }) => {
         if (socket.current === ws) socket.current = null
         if (disposed) return
         setStatus('closed')

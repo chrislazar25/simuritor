@@ -12,6 +12,8 @@ Built in 36 hours for the Base Power × AITX hackathon (tracks: **Orchestration*
 
 ![Promise kept vs contract size: normal winter week, Uri pre-storm and storm](docs/img/safe-contract.png)
 
+**[Open the recorded browser demo](https://simuritor-replay.celinelazar140.chatgpt.site)** · three recorded runs; live editable simulation runs locally.
+
 **▶ [Watch the 5-minute demo on Loom](https://www.loom.com/share/2e72a407f1cb4d49aa9815822353747e)**
 
 ![Simuritor during Uri: Feb 16 02:00, EEA3, $8,975/MWh. Neighbourhoods on battery (amber) and dark (grey); failovers covered in 5–11 s, some not](docs/img/storm-map.png)
@@ -179,7 +181,7 @@ Base's fleet data is private. Each assumption is listed with its basis, or marke
 - **Counterfactual:** neither Base nor ADER existed in 2021, so this is a what-if replay.
 
 ## Run it
-Requires [`uv`](https://docs.astral.sh/uv/) and Node. No API keys or `.env` needed; all data ships in `data/` (the basemap needs internet). The app needs the backend running; there's no static deploy.
+Requires [`uv`](https://docs.astral.sh/uv/) and Node. No API keys or `.env` needed; all data ships in `data/` (the basemap needs internet). Live mode needs the backend running. The shareable recorded demo runs entirely in the browser; see [shareable replay](docs/shareable-replay.md).
 
 ```bash
 uv sync
